@@ -1,5 +1,4 @@
 #include "flipper_rng_entropy.h"
-#include <math.h>
 
 #define TAG "FlipperRNG"
 
@@ -9,6 +8,13 @@ void flipper_rng_init_entropy_sources(FlipperRngState* state) {
     
     // Initialize ADC for noise collection
     if(state->entropy_sources & EntropySourceADC) {
+        // Clean up any existing handle first
+        if(state->adc_handle) {
+            FURI_LOG_I(TAG, "Releasing existing ADC handle...");
+            furi_hal_adc_release(state->adc_handle);
+            state->adc_handle = NULL;
+        }
+        
         FURI_LOG_I(TAG, "Acquiring ADC handle...");
         state->adc_handle = furi_hal_adc_acquire();
         if(state->adc_handle) {
@@ -210,45 +216,11 @@ bool von_neumann_extract(VonNeumannExtractor* extractor, uint8_t input_bit, uint
     return false;
 }
 
-// Estimate entropy quality using Shannon entropy
-float flipper_rng_estimate_entropy_quality(uint8_t* data, size_t length) {
-    if(length == 0) return 0.0f;
-    
-    // Count byte frequencies
-    uint32_t freq[256] = {0};
-    for(size_t i = 0; i < length; i++) {
-        freq[data[i]]++;
-    }
-    
-    // Calculate Shannon entropy
-    float entropy = 0.0f;
-    for(int i = 0; i < 256; i++) {
-        if(freq[i] > 0) {
-            float p = (float)freq[i] / (float)length;
-            entropy -= p * log2f(p);
-        }
-    }
-    
-    // Normalize to 0-1 range (max entropy is 8 bits)
-    return entropy / 8.0f;
-}
 
-// Update quality metric
+// Update quality metric (no longer used, kept for compatibility)
 void flipper_rng_update_quality_metric(FlipperRngState* state) {
-    furi_mutex_acquire(state->mutex, FuriWaitForever);
-    
-    // Sample a portion of the pool for quality estimation
-    const size_t sample_size = 256;
-    uint8_t sample[sample_size];
-    
-    size_t start_pos = (state->entropy_pool_pos + RNG_POOL_SIZE - sample_size) % RNG_POOL_SIZE;
-    for(size_t i = 0; i < sample_size; i++) {
-        sample[i] = state->entropy_pool[(start_pos + i) % RNG_POOL_SIZE];
-    }
-    
-    state->entropy_quality = flipper_rng_estimate_entropy_quality(sample, sample_size);
-    
-    furi_mutex_release(state->mutex);
+    // Quality calculation removed - now handled by test function
+    UNUSED(state);
 }
 
 // Main entropy collection function

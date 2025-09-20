@@ -1,36 +1,45 @@
 #include "flipper_rng_views.h"
 #include "flipper_rng_entropy.h"
 #include <gui/elements.h>
+#include <math.h>
 
 #define TAG "FlipperRNG"
 
 // Configuration options
 static const char* entropy_source_names[] = {
-    "All Sources",
-    "HW RNG Only",
-    "ADC + HW RNG",
-    "Timing Based",
-    "Custom Mix",
+    "All",
+    "HW RNG",
+    "ADC+HW",
+    "Timing",
+    "Custom",
 };
 
 static const char* output_mode_names[] = {
-    "USB CDC",
-    "UART GPIO",
-    "Visualization",
+    "USB",
+    "UART",
+    "Visual",
     "File",
 };
 
 static const char* poll_interval_names[] = {
-    "1 ms",
-    "5 ms",
-    "10 ms",
-    "50 ms",
-    "100 ms",
-    "500 ms",
+    "1ms",
+    "5ms", 
+    "10ms",
+    "50ms",
+    "100ms",
+    "500ms",
 };
 
 static const uint32_t poll_interval_values[] = {
     1, 5, 10, 50, 100, 500,
+};
+
+static const uint32_t entropy_source_values[] = {
+    EntropySourceAll,                                                              // All
+    EntropySourceHardwareRNG,                                                      // HW RNG
+    EntropySourceHardwareRNG | EntropySourceADC,                                  // ADC+HW
+    EntropySourceTiming | EntropySourceCPUJitter | EntropySourceButtonTiming,      // Timing
+    EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage,  // Mix
 };
 
 void flipper_rng_source_changed(VariableItem* item) {
@@ -80,13 +89,21 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     // Entropy sources
     item = variable_item_list_add(
         app->variable_item_list,
-        "Entropy Sources",
+        "Entropy Source",
         COUNT_OF(entropy_source_names),
         flipper_rng_source_changed,
         app
     );
-    variable_item_set_current_value_index(item, 0);
-    variable_item_set_current_value_text(item, entropy_source_names[0]);
+    // Find the index for the current entropy source setting
+    uint32_t entropy_index = 0;
+    for(uint32_t i = 0; i < COUNT_OF(entropy_source_values); i++) {
+        if(entropy_source_values[i] == app->state->entropy_sources) {
+            entropy_index = i;
+            break;
+        }
+    }
+    variable_item_set_current_value_index(item, entropy_index);
+    variable_item_set_current_value_text(item, entropy_source_names[entropy_index]);
     
     // Output mode
     item = variable_item_list_add(
@@ -96,19 +113,27 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
         flipper_rng_output_mode_changed,
         app
     );
-    variable_item_set_current_value_index(item, 0);
-    variable_item_set_current_value_text(item, output_mode_names[0]);
+    variable_item_set_current_value_index(item, app->state->output_mode);
+    variable_item_set_current_value_text(item, output_mode_names[app->state->output_mode]);
     
     // Poll interval
     item = variable_item_list_add(
         app->variable_item_list,
-        "Poll Interval",
+        "Poll Rate",
         COUNT_OF(poll_interval_names),
         flipper_rng_poll_interval_changed,
         app
     );
-    variable_item_set_current_value_index(item, 2); // Default 10ms
-    variable_item_set_current_value_text(item, poll_interval_names[2]);
+    // Find the index for the current poll interval
+    uint32_t poll_index = 0;
+    for(uint32_t i = 0; i < COUNT_OF(poll_interval_values); i++) {
+        if(poll_interval_values[i] == app->state->poll_interval_ms) {
+            poll_index = i;
+            break;
+        }
+    }
+    variable_item_set_current_value_index(item, poll_index);
+    variable_item_set_current_value_text(item, poll_interval_names[poll_index]);
 }
 
 // Visualization drawing
@@ -129,20 +154,11 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
         if(model->is_running) {
             canvas_draw_str(canvas, 2, 20, "Status: Generating");
             
-            // Draw entropy quality bar with percentage
-            canvas_draw_str(canvas, 2, 30, "Quality:");
-            int bar_width = (int)(model->entropy_quality * 55.0f);  // Smaller bar (55 instead of 70)
-            canvas_draw_box(canvas, 40, 26, bar_width, 6);          // Moved closer (40 instead of 45)
-            canvas_draw_frame(canvas, 40, 26, 55, 6);               // Smaller frame (55 instead of 70)
-            // Add percentage after the bar
-            char quality_buffer[8];
-            snprintf(quality_buffer, sizeof(quality_buffer), "%.0f%%", (double)(model->entropy_quality * 100));
-            canvas_draw_str(canvas, 98, 30, quality_buffer);        // Adjusted position for smaller bar
             
             // Bytes generated
             char buffer[32];
             snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
-            canvas_draw_str(canvas, 2, 40, buffer);
+            canvas_draw_str(canvas, 2, 30, buffer);
             
             // Random data visualization as pixels
             for(int y = 0; y < 3; y++) {
@@ -153,7 +169,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
                     // Draw pixels based on bit patterns
                     for(int bit = 0; bit < 8 && (x + bit) < 128; bit++) {
                         if(byte & (1 << bit)) {
-                            canvas_draw_dot(canvas, x + bit, 45 + y * 3);
+                            canvas_draw_dot(canvas, x + bit, 38 + y * 3);
                         }
                     }
                 }
@@ -161,14 +177,14 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             
             // Draw random walk pattern
             int walk_x = 64;
-            int walk_y = 56;
+            int walk_y = 50;
             for(int i = 0; i < 32; i++) {
                 uint8_t direction = model->random_data[i] & 0x03;
                 switch(direction) {
                 case 0: walk_x = MIN(walk_x + 1, 127); break;
                 case 1: walk_x = MAX(walk_x - 1, 0); break;
                 case 2: walk_y = MIN(walk_y + 1, 63); break;
-                case 3: walk_y = MAX(walk_y - 1, 50); break;
+                case 3: walk_y = MAX(walk_y - 1, 48); break;
                 }
                 canvas_draw_dot(canvas, walk_x, walk_y);
             }
@@ -184,9 +200,9 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
         if(model->is_running) {
             // Pure visualization - no text overlays
             
-            // Draw the walk path with connected lines
-            int walk_x = model->walk_x;
-            int walk_y = model->walk_y;
+            // Always start from center for consistent visualization
+            int walk_x = 64;
+            int walk_y = 32;
             
             // Process all random bytes to create a longer walk
             for(int i = 0; i < 128; i++) {
@@ -280,19 +296,392 @@ void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t 
             
             // Update statistics
             model->is_running = app->state->is_running;
-            model->entropy_quality = app->state->entropy_quality;
             model->bytes_generated = app->state->bytes_generated;
             model->data_pos = (model->data_pos + 1) % 128;
             
-            // Update walk position for mode 1 (persistent walk)
-            if(model->viz_mode == 1 && data && length > 0) {
-                // Move walk based on first byte of new data
-                uint8_t direction = data[0] & 0x03;
-                switch(direction) {
-                case 0: model->walk_x = MIN(model->walk_x + 1, 127); break;
-                case 1: model->walk_x = MAX(model->walk_x - 1, 0); break;
-                case 2: model->walk_y = MIN(model->walk_y + 1, 63); break;
-                case 3: model->walk_y = MAX(model->walk_y - 1, 10); break;
+            // Don't update walk position here - let the draw callback handle it
+            // This prevents the walk from drifting as data updates
+        },
+        true
+    );
+}
+
+// Test view callbacks
+void flipper_rng_test_draw_callback(Canvas* canvas, void* context) {
+    FlipperRngTestModel* model = context;
+    
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "RNG Quality Test");
+    
+    canvas_set_font(canvas, FontSecondary);
+    
+    if(model->is_testing) {
+        // Show progress bar
+        canvas_draw_str(canvas, 2, 22, "Collecting entropy...");
+        
+        // Progress bar
+        canvas_draw_frame(canvas, 2, 26, 124, 8);
+        int progress_width = (int)(model->test_progress * 122);
+        if(progress_width > 0) {
+            canvas_draw_box(canvas, 3, 27, progress_width, 6);
+        }
+        
+        // Show bytes collected
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Bytes: %u / %u", 
+                 (unsigned)model->bytes_collected, (unsigned)model->bytes_needed);
+        canvas_draw_str(canvas, 2, 44, buffer);
+    } else if(model->test_complete) {
+        // Show test results
+        canvas_draw_str(canvas, 2, 22, "Test Complete!");
+        
+        // Overall score with visual indicator
+        char score_str[32];
+        snprintf(score_str, sizeof(score_str), "Overall: %.1f%%", (double)(model->overall_score * 100));
+        canvas_draw_str(canvas, 2, 34, score_str);
+        
+        // Quality bar for overall score
+        canvas_draw_frame(canvas, 60, 30, 66, 6);
+        int score_width = (int)(model->overall_score * 64);
+        canvas_draw_box(canvas, 61, 31, score_width, 4);
+        
+        // Individual test results
+        canvas_set_font(canvas, FontSecondary);
+        char result[64];
+        
+        snprintf(result, sizeof(result), "Chi²: %.0f%% (%lu, exp:255)", 
+                 (double)(model->chi_square_result * 100), (unsigned long)model->actual_chi_square);
+        canvas_draw_str(canvas, 2, 44, result);
+        
+        snprintf(result, sizeof(result), "Bit Freq: %.1f%%", (double)(model->bit_frequency_result * 100));
+        canvas_draw_str(canvas, 2, 52, result);
+        
+        snprintf(result, sizeof(result), "Runs: %.1f%%", (double)(model->runs_test_result * 100));
+        canvas_draw_str(canvas, 2, 60, result);
+    } else {
+        // Initial state - show size selection
+        canvas_draw_str(canvas, 2, 20, "Select test size:");
+        
+        // Size options with selection indicator - simplified layout
+        const char* sizes[] = {"16 KB", "32 KB", "64 KB"};
+        const char* desc[] = {"Quick", "Standard", "Thorough"};
+        
+        for(int i = 0; i < 3; i++) {
+            int y = 32 + i * 10;
+            if(i == model->selected_size) {
+                // Highlight selected option
+                canvas_draw_box(canvas, 0, y - 7, 128, 9);
+                canvas_set_color(canvas, ColorWhite);
+            }
+            
+            // Draw size on the left, description on the right
+            canvas_draw_str(canvas, 2, y, sizes[i]);
+            canvas_draw_str(canvas, 45, y, "-");
+            canvas_draw_str(canvas, 55, y, desc[i]);
+            
+            if(i == model->selected_size) {
+                canvas_set_color(canvas, ColorBlack);
+            }
+        }
+        
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 62, "Up/Down: Select, OK: Start");
+    }
+}
+
+bool flipper_rng_test_input_callback(InputEvent* event, void* context) {
+    FlipperRngApp* app = context;
+    bool consumed = false;
+    
+    if(event->type == InputTypeShort) {
+        if(event->key == InputKeyBack) {
+            // Stop test if running and return to menu
+            with_view_model(
+                app->test_view,
+                FlipperRngTestModel* model,
+                {
+                    model->is_testing = false;
+                    model->test_complete = false;
+                    model->bytes_collected = 0;
+                    model->test_progress = 0.0f;
+                    model->selected_size = 0; // Reset to 16KB
+                },
+                false
+            );
+            
+            // Stop the test
+            if(app->state->test_running) {
+                app->state->test_running = false;
+                
+                // Stop the worker if we started it for the test
+                if(app->state->test_started_worker) {
+                    FURI_LOG_I(TAG, "User cancelled test - stopping worker thread");
+                    app->state->is_running = false;
+                    app->state->test_started_worker = false;
+                }
+                
+                // Free test buffer
+                if(app->state->test_buffer) {
+                    free(app->state->test_buffer);
+                    app->state->test_buffer = NULL;
+                    app->state->test_buffer_size = 0;
+                    app->state->test_buffer_pos = 0;
+                }
+            }
+            
+            view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewMenu);
+            consumed = true;
+        } else if(event->key == InputKeyUp) {
+            // Move selection up
+            with_view_model(
+                app->test_view,
+                FlipperRngTestModel* model,
+                {
+                    if(!model->is_testing && !model->test_complete) {
+                        if(model->selected_size > 0) {
+                            model->selected_size--;
+                        }
+                    }
+                },
+                true
+            );
+            consumed = true;
+        } else if(event->key == InputKeyDown) {
+            // Move selection down
+            with_view_model(
+                app->test_view,
+                FlipperRngTestModel* model,
+                {
+                    if(!model->is_testing && !model->test_complete) {
+                        if(model->selected_size < 2) {
+                            model->selected_size++;
+                        }
+                    }
+                },
+                true
+            );
+            consumed = true;
+        } else if(event->key == InputKeyOk) {
+            // Get selected size
+            size_t test_size = 16384; // Default 16KB
+            
+            with_view_model(
+                app->test_view,
+                FlipperRngTestModel* model,
+                {
+                    // Determine size based on selection
+                    switch(model->selected_size) {
+                        case 0: test_size = 16384; break;    // 16KB
+                        case 1: test_size = 32768; break;    // 32KB
+                        case 2: test_size = 65536; break;    // 64KB
+                        default: test_size = 16384; break;   // Fallback to 16KB
+                    }
+                    
+                    if(!model->is_testing) {
+                        // Start new test
+                        model->is_testing = true;
+                        model->test_complete = false;
+                        model->bytes_collected = 0;
+                        model->bytes_needed = test_size;
+                        model->test_progress = 0.0f;
+                        model->overall_score = 0.0f;
+                        model->chi_square_result = 0.0f;
+                        model->bit_frequency_result = 0.0f;
+                        model->runs_test_result = 0.0f;
+                        model->actual_chi_square = 0;
+                    }
+                },
+                true
+            );
+            
+            // Make sure any previous test is fully stopped
+            app->state->test_running = false;
+            
+            // Wait a bit for worker to stop writing to test buffer
+            furi_delay_ms(10);
+            
+            // Allocate test buffer and start collecting
+            if(app->state->test_buffer) {
+                free(app->state->test_buffer);
+                app->state->test_buffer = NULL;
+            }
+            
+            app->state->test_buffer = malloc(test_size);
+            if(!app->state->test_buffer) {
+                FURI_LOG_E(TAG, "Failed to allocate test buffer of size %u", test_size);
+                return false;
+            }
+            
+            app->state->test_buffer_size = test_size;
+            app->state->test_buffer_pos = 0;
+            app->state->test_running = true;
+            
+            // Track if we need to start the worker for the test
+            static bool test_started_worker = false;
+            test_started_worker = false;
+            
+            // Start the worker if not running
+            if(!app->state->is_running) {
+                FURI_LOG_I(TAG, "Starting worker thread for test");
+                app->state->is_running = true;
+                test_started_worker = true;
+                if(furi_thread_get_state(app->worker_thread) == FuriThreadStateStopped) {
+                    furi_thread_start(app->worker_thread);
+                }
+            } else {
+                FURI_LOG_I(TAG, "Using existing worker thread for test");
+            }
+            
+            // Store whether we started the worker (for cleanup later)
+            app->state->test_started_worker = test_started_worker;
+            
+            consumed = true;
+        }
+    }
+    
+    return consumed;
+}
+
+void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t length) {
+    if(!app->state->test_running || !app->state->test_buffer) {
+        return;
+    }
+    
+    // Copy data to test buffer
+    size_t copy_len = length;
+    if(app->state->test_buffer_pos + copy_len > app->state->test_buffer_size) {
+        copy_len = app->state->test_buffer_size - app->state->test_buffer_pos;
+    }
+    
+    if(copy_len > 0) {
+        memcpy(app->state->test_buffer + app->state->test_buffer_pos, data, copy_len);
+        app->state->test_buffer_pos += copy_len;
+    }
+    
+    // Update progress
+    with_view_model(
+        app->test_view,
+        FlipperRngTestModel* model,
+        {
+            model->bytes_collected = app->state->test_buffer_pos;
+            model->test_progress = (float)app->state->test_buffer_pos / (float)app->state->test_buffer_size;
+            
+            // Check if collection is complete
+            if(app->state->test_buffer_pos >= app->state->test_buffer_size) {
+                model->is_testing = false;
+                model->test_complete = true;
+                
+                // Run statistical tests
+                // Chi-square test for byte distribution
+                uint32_t byte_counts[256] = {0};
+                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
+                    byte_counts[app->state->test_buffer[i]]++;
+                }
+                
+                float expected = (float)app->state->test_buffer_size / 256.0f;
+                float chi_square = 0.0f;
+                for(int i = 0; i < 256; i++) {
+                    float diff = (float)byte_counts[i] - expected;
+                    chi_square += (diff * diff) / expected;
+                }
+                
+                // Store actual value
+                model->actual_chi_square = (uint32_t)chi_square;
+                
+                // Chi-square expected value is 255 (df) with std dev ~22.6
+                // For 95% confidence: 210-300
+                // For 99% confidence: 200-310
+                // Adjust scoring based on deviation from expected
+                float chi_expected = 255.0f;
+                float chi_deviation = fabsf(chi_square - chi_expected);
+                
+                if(chi_deviation <= 22.6f) {  // Within 1 std dev
+                    model->chi_square_result = 0.95f;
+                } else if(chi_deviation <= 45.2f) {  // Within 2 std dev
+                    model->chi_square_result = 0.85f;
+                } else if(chi_deviation <= 67.8f) {  // Within 3 std dev
+                    model->chi_square_result = 0.70f;
+                } else {
+                    model->chi_square_result = 0.50f;
+                }
+                
+                // Bit frequency test
+                uint32_t ones = 0;
+                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
+                    uint8_t byte = app->state->test_buffer[i];
+                    for(int b = 0; b < 8; b++) {
+                        if(byte & (1 << b)) ones++;
+                    }
+                }
+                uint32_t total_bits = app->state->test_buffer_size * 8;
+                float bit_ratio = (float)ones / (float)total_bits;
+                
+                // Good randomness should have ~50% ones
+                float bit_deviation = fabsf(bit_ratio - 0.5f);
+                if(bit_deviation < 0.01f) {
+                    model->bit_frequency_result = 0.95f;
+                } else if(bit_deviation < 0.02f) {
+                    model->bit_frequency_result = 0.85f;
+                } else if(bit_deviation < 0.05f) {
+                    model->bit_frequency_result = 0.70f;
+                } else {
+                    model->bit_frequency_result = 0.50f;
+                }
+                
+                // Runs test (sequences of same bits)
+                uint32_t runs = 0;
+                bool last_bit = false;
+                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
+                    uint8_t byte = app->state->test_buffer[i];
+                    for(int b = 0; b < 8; b++) {
+                        bool bit = (byte >> b) & 1;
+                        if(i == 0 && b == 0) {
+                            last_bit = bit;
+                        } else if(bit != last_bit) {
+                            runs++;
+                            last_bit = bit;
+                        }
+                    }
+                }
+                
+                // Expected runs for random data is approximately total_bits/2
+                uint32_t expected_runs = total_bits / 2;
+                float runs_ratio = (float)runs / (float)expected_runs;
+                
+                // Good randomness should have runs ratio close to 1.0
+                float runs_deviation = fabsf(runs_ratio - 1.0f);
+                if(runs_deviation < 0.05f) {
+                    model->runs_test_result = 0.95f;
+                } else if(runs_deviation < 0.10f) {
+                    model->runs_test_result = 0.85f;
+                } else if(runs_deviation < 0.20f) {
+                    model->runs_test_result = 0.70f;
+                } else {
+                    model->runs_test_result = 0.50f;
+                }
+                
+                // Calculate overall score
+                model->overall_score = (model->chi_square_result + 
+                                       model->bit_frequency_result + 
+                                       model->runs_test_result) / 3.0f;
+                
+                // Stop the test
+                app->state->test_running = false;
+                
+                // Stop the worker if we started it for the test
+                if(app->state->test_started_worker) {
+                    FURI_LOG_I(TAG, "Stopping worker thread that was started for test");
+                    app->state->is_running = false;
+                    app->state->test_started_worker = false;
+                }
+                
+                // Free test buffer after completion
+                if(app->state->test_buffer) {
+                    free(app->state->test_buffer);
+                    app->state->test_buffer = NULL;
+                    app->state->test_buffer_size = 0;
+                    app->state->test_buffer_pos = 0;
                 }
             }
         },

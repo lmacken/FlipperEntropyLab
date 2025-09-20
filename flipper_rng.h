@@ -41,6 +41,7 @@ typedef enum {
     FlipperRngViewConfig,
     FlipperRngViewOutput,
     FlipperRngViewVisualization,
+    FlipperRngViewTest,
 } FlipperRngView;
 
 // Application state
@@ -53,7 +54,14 @@ typedef struct {
     uint8_t entropy_pool[RNG_POOL_SIZE];
     size_t entropy_pool_pos;
     uint32_t bytes_generated;
-    float entropy_quality;
+    
+    // Test data
+    uint8_t* test_buffer;
+    size_t test_buffer_size;
+    size_t test_buffer_pos;
+    bool test_running;
+    bool test_started_worker;  // Track if test started the worker
+    float test_result;
     
     // Hardware handles
     FuriHalAdcHandle* adc_handle;
@@ -63,6 +71,9 @@ typedef struct {
     uint32_t samples_collected;
     uint32_t last_entropy_bits;
 } FlipperRngState;
+
+// Forward declaration
+typedef struct FuriHalUsbInterface FuriHalUsbInterface;
 
 // Main application structure
 typedef struct {
@@ -77,8 +88,10 @@ typedef struct {
     FlipperRngState* state;
     FuriThread* worker_thread;
     
+    
     // Views
     View* visualization_view;
+    View* test_view;
 } FlipperRngApp;
 
 // Function prototypes

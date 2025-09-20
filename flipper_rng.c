@@ -6,11 +6,49 @@
 #include <furi_hal_power.h>
 #include <furi_hal_serial.h>
 #include <furi_hal_usb_cdc.h>
+#include <furi_hal_usb.h>
+#include <cli/cli_vcp.h>
+#include <furi_hal.h>
 #include <power/power_service/power.h>
 #include <toolbox/stream/stream.h>
 #include <toolbox/stream/file_stream.h>
 
 #define TAG "FlipperRNG"
+
+// Minimal CDC callbacks for interface 1
+static void flipper_rng_cdc_tx_complete(void* context) {
+    // Log when TX completes to verify callbacks are working
+    UNUSED(context);
+    FURI_LOG_D(TAG, "CDC TX complete callback fired");
+}
+
+static void flipper_rng_cdc_rx(void* context) {
+    // We don't receive data, only send
+    UNUSED(context);
+}
+
+static void flipper_rng_cdc_state(void* context, uint8_t state) {
+    UNUSED(context);
+    FURI_LOG_I(TAG, "CDC state changed: 0x%02X", state);
+}
+
+static void flipper_rng_cdc_ctrl_line(void* context, uint8_t state) {
+    UNUSED(context);
+    UNUSED(state);
+}
+
+static void flipper_rng_cdc_line_config(void* context, struct usb_cdc_line_coding* config) {
+    UNUSED(context);
+    UNUSED(config);
+}
+
+static const CdcCallbacks flipper_rng_cdc_cb = {
+    flipper_rng_cdc_tx_complete,
+    flipper_rng_cdc_rx,
+    flipper_rng_cdc_state,
+    flipper_rng_cdc_ctrl_line,
+    flipper_rng_cdc_line_config,
+};
 
 // LED status control functions
 static void flipper_rng_set_led_stopped(FlipperRngApp* app) {
@@ -33,13 +71,14 @@ static void flipper_rng_set_led_off(FlipperRngApp* app) {
 }
 
 
+
 // Menu items
 typedef enum {
-    FlipperRngMenuStart,
-    FlipperRngMenuStop,
+    FlipperRngMenuToggle,  // Combined Start/Stop
     FlipperRngMenuConfig,
     FlipperRngMenuVisualization,
     FlipperRngMenuStats,
+    FlipperRngMenuTest,
     FlipperRngMenuAbout,
     FlipperRngMenuQuit,
 } FlipperRngMenuItem;
@@ -48,27 +87,140 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
     FlipperRngApp* app = context;
     
     switch(index) {
-    case FlipperRngMenuStart:
+    case FlipperRngMenuToggle:
         if(!app->state->is_running) {
-            FURI_LOG_I(TAG, "Starting worker thread...");
+            // Start the generator
+            FURI_LOG_I(TAG, "Start Generator selected, is_running=%d", app->state->is_running);
             
-            // Make sure thread is not running
-            if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
-                FURI_LOG_W(TAG, "Worker thread still running, waiting...");
-                furi_thread_join(app->worker_thread);
+            // ALWAYS stop and clean up first, regardless of is_running flag
+            FURI_LOG_I(TAG, "Force stopping any existing worker thread...");
+            app->state->is_running = false;
+        
+        // Clean up any existing USB configuration
+        if(app->state->output_mode == OutputModeUSB) {
+            furi_hal_cdc_set_callbacks(1, NULL, NULL);
+            FURI_LOG_I(TAG, "Cleared existing USB callbacks");
+        }
+        
+        // Wait for thread to actually stop if it's running
+        if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
+            FURI_LOG_I(TAG, "Waiting for worker thread to stop...");
+            furi_thread_join(app->worker_thread);
+            FURI_LOG_I(TAG, "Worker thread stopped");
+        }
+        
+        // Now start with current settings
+        FURI_LOG_I(TAG, "Starting worker thread with current settings...");
+        
+        // Initialize output interface based on mode
+        if(app->state->output_mode == OutputModeUART && !app->state->serial_handle) {
+            FURI_LOG_I(TAG, "Initializing UART for output...");
+            app->state->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
+            if(app->state->serial_handle) {
+                furi_hal_serial_init(app->state->serial_handle, 115200);
+                FURI_LOG_I(TAG, "UART initialized at 115200 baud");
+            } else {
+                FURI_LOG_E(TAG, "Failed to acquire UART");
+            }
+        } else if(app->state->output_mode == OutputModeUSB) {
+            FURI_LOG_I(TAG, "Setting up USB CDC interface 1 (like GPIO USB UART bridge)...");
+            
+            // Get CLI VCP handle
+            CliVcp* cli_vcp = furi_record_open(RECORD_CLI_VCP);
+            
+            // Disable CLI VCP temporarily
+            cli_vcp_disable(cli_vcp);
+            
+            // Switch to dual CDC mode - use reinit to force the change
+            furi_hal_usb_unlock();
+            
+            // Get current config to check if we're already in dual mode
+            FuriHalUsbInterface* current = furi_hal_usb_get_config();
+            FURI_LOG_I(TAG, "Current USB config: %p, dual: %p, single: %p", 
+                       current, &usb_cdc_dual, &usb_cdc_single);
+            
+            // If not in dual mode, force it
+            if(current != &usb_cdc_dual) {
+                FURI_LOG_I(TAG, "Not in dual mode, forcing USB reinit...");
+                
+                // Force USB to reinitialize with dual CDC mode
+                furi_hal_usb_disable();
+                furi_delay_ms(100);
+                
+                if(furi_hal_usb_set_config(&usb_cdc_dual, NULL)) {
+                    FURI_LOG_I(TAG, "USB config set to dual CDC");
+                } else {
+                    FURI_LOG_W(TAG, "USB config change failed, trying reinit");
+                    furi_hal_usb_reinit();
+                    furi_delay_ms(100);
+                    furi_hal_usb_set_config(&usb_cdc_dual, NULL);
+                }
+                
+                furi_hal_usb_enable();
+                FURI_LOG_I(TAG, "USB re-enabled");
+            } else {
+                FURI_LOG_I(TAG, "Already in dual CDC mode");
             }
             
+            // Re-enable CLI VCP on interface 0  
+            cli_vcp_enable(cli_vcp);
+            FURI_LOG_I(TAG, "CLI VCP re-enabled on interface 0");
+            
+            // CRITICAL: Set callbacks for interface 1 to make it functional
+            furi_hal_cdc_set_callbacks(1, (CdcCallbacks*)&flipper_rng_cdc_cb, app);
+            FURI_LOG_I(TAG, "CDC callbacks set for interface 1");
+            
+            // Give USB more time to settle and enumerate both interfaces
+            FURI_LOG_I(TAG, "Waiting for USB enumeration...");
+            furi_delay_ms(1000);
+            
+            // Verify the configuration took effect
+            FuriHalUsbInterface* new_config = furi_hal_usb_get_config();
+            if(new_config == &usb_cdc_dual) {
+                FURI_LOG_I(TAG, "USB CDC dual mode confirmed - interface 1 ready");
+            } else {
+                FURI_LOG_E(TAG, "USB config still not dual! Got %p, expected %p", 
+                           new_config, &usb_cdc_dual);
+            }
+            
+            furi_record_close(RECORD_CLI_VCP);
+        }
+        
+        // Make sure thread is not running
+        if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
+            FURI_LOG_W(TAG, "Worker thread still running, waiting...");
+            furi_thread_join(app->worker_thread);
+        }
+        
+        // Reset counters for fresh start
+        app->state->bytes_generated = 0;
+        app->state->samples_collected = 0;
+        
+        // Start the worker thread
             app->state->is_running = true;
             furi_thread_start(app->worker_thread);
             flipper_rng_set_led_generating(app);  // Set LED to green
-            FURI_LOG_I(TAG, "Worker thread started from menu");
-        }
-        break;
-        
-    case FlipperRngMenuStop:
-        if(app->state->is_running) {
+            FURI_LOG_I(TAG, "Worker thread started from menu, is_running=%d", app->state->is_running);
+        } else {
+            // Stop the generator
             FURI_LOG_I(TAG, "Stopping worker thread...");
             app->state->is_running = false;
+            
+            // Clean up USB if it was used
+            if(app->state->output_mode == OutputModeUSB) {
+                // Clear callbacks for interface 1
+                furi_hal_cdc_set_callbacks(1, NULL, NULL);
+                FURI_LOG_I(TAG, "USB CDC callbacks cleared");
+            }
+            
+            // Release UART if it was acquired
+            if(app->state->serial_handle) {
+                furi_hal_serial_deinit(app->state->serial_handle);
+                furi_hal_serial_control_release(app->state->serial_handle);
+                app->state->serial_handle = NULL;
+                FURI_LOG_I(TAG, "UART released");
+            }
+            
             flipper_rng_set_led_stopped(app);  // Set LED to red
             // Don't block GUI thread with join - let worker exit on its own
         }
@@ -86,7 +238,6 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             FlipperRngVisualizationModel* model,
             {
                 model->is_running = app->state->is_running;
-                model->entropy_quality = app->state->entropy_quality;
                 model->bytes_generated = app->state->bytes_generated;
                 model->viz_mode = 0;  // Start with mode 0
                 model->walk_x = 64;   // Center X
@@ -107,23 +258,33 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewVisualization);
         break;
         
+    case FlipperRngMenuTest:
+        FURI_LOG_I(TAG, "Test RNG Quality selected");
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewTest);
+        break;
+        
     case FlipperRngMenuStats:
         {
             furi_string_reset(app->text_box_store);
+            // Count active sources
+            uint8_t active_count = 0;
+            for(int i = 0; i < 7; i++) {
+                if(app->state->entropy_sources & (1 << i)) active_count++;
+            }
+            
             furi_string_printf(
                 app->text_box_store,
                 "FlipperRNG Statistics\n\n"
                 "Bytes Generated: %lu\n"
                 "Samples Collected: %lu\n"
-                "Entropy Quality: %.2f%%\n"
+                "Active Sources: %d\n"
                 "Pool Position: %zu/%d\n"
-                "Active Sources: %d\n",
+                "Implementation: Multi-source\n",
                 app->state->bytes_generated,
                 app->state->samples_collected,
-                (double)(app->state->entropy_quality * 100.0f),
+                active_count,
                 app->state->entropy_pool_pos,
-                RNG_POOL_SIZE,
-                __builtin_popcount(app->state->entropy_sources)
+                RNG_POOL_SIZE
             );
             text_box_set_text(app->text_box, furi_string_get_cstr(app->text_box_store));
             view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewOutput);
@@ -138,14 +299,8 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             "High-quality entropy\n"
             "generator using multiple\n"
             "hardware sources.\n\n"
-            "Sources:\n"
-            "- Hardware RNG\n"
-            "- ADC noise\n"
-            "- Timing jitter\n"
-            "- Button timing\n"
-            "- CPU jitter\n"
-            "- Battery voltage\n"
-            "- Temperature\n",
+            "Author: Luke Macken\n"
+            "<luke@phorex.org>\n",
             FLIPPER_RNG_VERSION
         );
         text_box_set_text(app->text_box, furi_string_get_cstr(app->text_box_store));
@@ -196,15 +351,20 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     }
     app->state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->state->entropy_sources = EntropySourceAll;
-    app->state->output_mode = OutputModeUSB;
+    app->state->output_mode = OutputModeVisualization;
     app->state->poll_interval_ms = 10;
     app->state->is_running = false;
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
     app->state->samples_collected = 0;
-    app->state->entropy_quality = 0.0f;
     app->state->adc_handle = NULL;
     app->state->serial_handle = NULL;
+    app->state->test_buffer = NULL;
+    app->state->test_buffer_size = 0;
+    app->state->test_buffer_pos = 0;
+    app->state->test_running = false;
+    app->state->test_started_worker = false;
+    app->state->test_result = 0.0f;
     
     // Clear entropy pool with initial random data
     furi_hal_random_fill_buf(app->state->entropy_pool, RNG_POOL_SIZE);
@@ -240,11 +400,11 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     // Main menu
     app->submenu = submenu_alloc();
     submenu_set_header(app->submenu, "FlipperRNG v1.0");
-    submenu_add_item(app->submenu, "Start Generator", FlipperRngMenuStart, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Stop Generator", FlipperRngMenuStop, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Start/Stop Generator", FlipperRngMenuToggle, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Configuration", FlipperRngMenuConfig, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Visualization", FlipperRngMenuVisualization, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Statistics", FlipperRngMenuStats, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Test RNG Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "About", FlipperRngMenuAbout, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Quit", FlipperRngMenuQuit, flipper_rng_menu_callback, app);
     
@@ -277,6 +437,15 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->visualization_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewVisualization, app->visualization_view);
     
+    // Test view
+    app->test_view = view_alloc();
+    view_set_context(app->test_view, app);
+    view_allocate_model(app->test_view, ViewModelTypeLocking, sizeof(FlipperRngTestModel));
+    view_set_draw_callback(app->test_view, flipper_rng_test_draw_callback);
+    view_set_input_callback(app->test_view, flipper_rng_test_input_callback);
+    view_set_previous_callback(app->test_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewTest, app->test_view);
+    
     // Create worker thread
     app->worker_thread = furi_thread_alloc();
     furi_thread_set_name(app->worker_thread, "FlipperRngWorker");
@@ -291,6 +460,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     // Set initial LED status (red = stopped) - do this last when everything is ready
     FURI_LOG_I(TAG, "Setting initial LED state to RED (stopped)...");
     flipper_rng_set_led_stopped(app);
+    
     
     FURI_LOG_I(TAG, "App allocation complete");
     return app;
@@ -308,6 +478,8 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     // Turn off all LEDs before exiting
     flipper_rng_set_led_off(app);
     
+    // USB cleanup removed for stability
+    
     // Free worker thread
     furi_thread_free(app->worker_thread);
     
@@ -316,12 +488,14 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewConfig);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewOutput);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewVisualization);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewTest);
     
     submenu_free(app->submenu);
     variable_item_list_free(app->variable_item_list);
     text_box_free(app->text_box);
     furi_string_free(app->text_box_store);
     view_free(app->visualization_view);
+    view_free(app->test_view);
     
     view_dispatcher_free(app->view_dispatcher);
     
@@ -335,6 +509,12 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     }
     if(app->state->serial_handle) {
         furi_hal_serial_control_release(app->state->serial_handle);
+    }
+    
+    // Free test buffer if allocated
+    if(app->state->test_buffer) {
+        free(app->state->test_buffer);
+        app->state->test_buffer = NULL;
     }
     
     // Free state
