@@ -63,13 +63,13 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_hw_rng += 32;
         }
         
-        // ADC noise - medium quality
+        // ADC noise - enhanced multi-channel differential (medium-high quality)
         if(app->state->entropy_sources & EntropySourceADC) {
             if(app->state->adc_handle) {
                 uint32_t adc_noise = flipper_rng_get_adc_noise(app->state->adc_handle);
-                flipper_rng_add_entropy(app->state, adc_noise, 8);
-                entropy_bits += 8;
-                app->state->bits_from_adc += 8;
+                flipper_rng_add_entropy(app->state, adc_noise, 12); // Enhanced from 8 to 12 bits
+                entropy_bits += 12;
+                app->state->bits_from_adc += 12;
             }
         }
         

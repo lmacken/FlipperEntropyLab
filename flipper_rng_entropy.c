@@ -47,19 +47,47 @@ uint32_t flipper_rng_get_hardware_random(void) {
     return furi_hal_random_get();
 }
 
-// Get ADC noise (least significant bits contain noise)
+// Get enhanced multi-ADC differential noise from multiple internal channels
 uint32_t flipper_rng_get_adc_noise(FuriHalAdcHandle* handle) {
     if(!handle) return 0;
     
-    uint32_t noise = 0;
-    // Sample multiple ADC channels and XOR the LSBs
-    for(int i = 0; i < 4; i++) {
-        uint16_t adc_val = furi_hal_adc_read(handle, FuriHalAdcChannelVREFINT);
-        noise = (noise << 8) | (adc_val & 0xFF);
-        furi_delay_us(10); // Small delay between samples
+    FURI_LOG_I(TAG, "ADC: Starting multi-channel differential noise collection");
+    
+    uint32_t entropy = 0;
+    
+    // Take multiple rounds of differential measurements for better entropy
+    for(int round = 0; round < 2; round++) {
+        // Sample all three internal ADC channels
+        uint16_t vref = furi_hal_adc_read(handle, FuriHalAdcChannelVREFINT);
+        furi_delay_us(15); // Allow settling time
+        
+        uint16_t temp = furi_hal_adc_read(handle, FuriHalAdcChannelTEMPSENSOR);
+        furi_delay_us(15); // Temperature sensor needs 5μs minimum
+        
+        uint16_t vbat = furi_hal_adc_read(handle, FuriHalAdcChannelVBAT);
+        furi_delay_us(15); // Battery channel needs 12μs minimum
+        
+        // Calculate differential measurements (noise amplified in differences)
+        uint16_t diff1 = vref - temp;  // VREF vs Temperature sensor
+        uint16_t diff2 = temp - vbat;  // Temperature vs Battery voltage
+        uint16_t diff3 = vbat - vref;  // Battery vs VREF (completes triangle)
+        
+        // Extract noise from differentials and mix with timing
+        uint32_t timing_noise = DWT->CYCCNT;
+        uint8_t noise1 = (diff1 ^ (diff1 >> 8) ^ timing_noise) & 0xFF;
+        uint8_t noise2 = (diff2 ^ (diff2 >> 8) ^ (timing_noise >> 8)) & 0xFF;
+        
+        entropy = (entropy << 16) | (noise1 << 8) | noise2;
+        
+        FURI_LOG_I(TAG, "ADC: Round %d, VREF=%u, TEMP=%u, VBAT=%u, diffs=[%u,%u,%u]", 
+                  round, vref, temp, vbat, diff1, diff2, diff3);
+        
+        // Small delay between rounds
+        furi_delay_us(50);
     }
     
-    return noise;
+    FURI_LOG_I(TAG, "ADC: Collected multi-channel differential entropy=0x%08lX", entropy);
+    return entropy;
 }
 
 // Get timing jitter from high-resolution timer
@@ -488,3 +516,4 @@ void flipper_rng_collect_interrupt_jitter_entropy(FlipperRngState* state) {
         flipper_rng_add_entropy(state, interrupt_noise, 12); // High quality interrupt timing jitter
     }
 }
+
