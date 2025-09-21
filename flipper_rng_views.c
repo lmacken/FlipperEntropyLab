@@ -676,21 +676,34 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                 // Store actual value
                 model->actual_chi_square = (uint32_t)chi_square;
                 
-                // Chi-square expected value is 255 (df) with std dev ~22.6
-                // For 95% confidence: 210-300
-                // For 99% confidence: 200-310
-                // Adjust scoring based on deviation from expected
-                float chi_expected = 255.0f;
-                float chi_deviation = fabsf(chi_square - chi_expected);
+                // Chi-square test with proper statistical critical values
+                // df = 255 (256 byte values - 1)
+                // Critical values from chi-square distribution table
                 
-                if(chi_deviation <= 22.6f) {  // Within 1 std dev
-                    model->chi_square_result = 0.95f;
-                } else if(chi_deviation <= 45.2f) {  // Within 2 std dev
-                    model->chi_square_result = 0.85f;
-                } else if(chi_deviation <= 67.8f) {  // Within 3 std dev
-                    model->chi_square_result = 0.70f;
+                FURI_LOG_I(TAG, "Chi-square result: %.2f (df=255, expected~255)", (double)chi_square);
+                
+                // Chi-square interpretation balanced for practical entropy assessment
+                // Accounts for small sample effects while maintaining statistical validity
+                if(chi_square >= 200.9f && chi_square <= 311.6f) {
+                    // Within 99% confidence interval - excellent randomness
+                    model->chi_square_result = 0.99f;
+                    FURI_LOG_I(TAG, "Chi-square: EXCELLENT (99%% confidence)");
+                } else if(chi_square >= 190.0f && chi_square <= 330.0f) {
+                    // Slightly wider than 95% - very good randomness
+                    model->chi_square_result = 0.90f;
+                    FURI_LOG_I(TAG, "Chi-square: VERY GOOD (extended 95%% bounds)");
+                } else if(chi_square >= 170.0f && chi_square <= 360.0f) {
+                    // Practical bounds for small samples - good randomness
+                    model->chi_square_result = 0.80f;
+                    FURI_LOG_I(TAG, "Chi-square: GOOD (practical bounds for small samples)");
+                } else if(chi_square >= 140.0f && chi_square <= 400.0f) {
+                    // Wide bounds - acceptable for entropy generation
+                    model->chi_square_result = 0.65f;
+                    FURI_LOG_I(TAG, "Chi-square: ACCEPTABLE (%.2f - usable entropy)", (double)chi_square);
                 } else {
-                    model->chi_square_result = 0.50f;
+                    // Outside reasonable bounds - may indicate bias
+                    model->chi_square_result = 0.40f;
+                    FURI_LOG_W(TAG, "Chi-square: CONCERNING (%.2f - investigate entropy sources)", (double)chi_square);
                 }
                 
                 // Bit frequency test with safety checks
@@ -706,16 +719,28 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                 uint32_t total_bits = app->state->test_buffer_size * 8;
                 float bit_ratio = (float)ones / (float)total_bits;
                 
-                // Good randomness should have ~50% ones
+                FURI_LOG_I(TAG, "Bit frequency: %lu ones / %lu total = %.4f%% (expect ~50%%)", 
+                          ones, total_bits, (double)(bit_ratio * 100.0f));
+                
+                // Bit frequency test with proper statistical thresholds
+                // For large samples, should be very close to 50%
                 float bit_deviation = fabsf(bit_ratio - 0.5f);
-                if(bit_deviation < 0.01f) {
+                
+                if(bit_deviation < 0.005f) {        // Within 0.5% - excellent
+                    model->bit_frequency_result = 0.99f;
+                    FURI_LOG_I(TAG, "Bit frequency: EXCELLENT (%.3f%% deviation)", (double)(bit_deviation * 100));
+                } else if(bit_deviation < 0.01f) {   // Within 1% - very good
                     model->bit_frequency_result = 0.95f;
-                } else if(bit_deviation < 0.02f) {
-                    model->bit_frequency_result = 0.85f;
-                } else if(bit_deviation < 0.05f) {
+                    FURI_LOG_I(TAG, "Bit frequency: VERY GOOD (%.3f%% deviation)", (double)(bit_deviation * 100));
+                } else if(bit_deviation < 0.02f) {   // Within 2% - good
+                    model->bit_frequency_result = 0.90f;
+                    FURI_LOG_I(TAG, "Bit frequency: GOOD (%.3f%% deviation)", (double)(bit_deviation * 100));
+                } else if(bit_deviation < 0.05f) {   // Within 5% - acceptable
                     model->bit_frequency_result = 0.70f;
-                } else {
-                    model->bit_frequency_result = 0.50f;
+                    FURI_LOG_W(TAG, "Bit frequency: ACCEPTABLE (%.3f%% deviation)", (double)(bit_deviation * 100));
+                } else {                             // >5% deviation - poor
+                    model->bit_frequency_result = 0.30f;
+                    FURI_LOG_W(TAG, "Bit frequency: POOR (%.3f%% deviation - bias detected)", (double)(bit_deviation * 100));
                 }
                 
                 // Runs test (sequences of same bits) with safety checks
@@ -747,22 +772,54 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                     FURI_LOG_W(TAG, "Invalid test data: total_bits=%lu, expected_runs=%lu", total_bits, expected_runs);
                 }
                 
+                FURI_LOG_I(TAG, "Runs test: %lu runs / %lu expected = %.4f ratio (expect ~1.0)", 
+                          runs, expected_runs, (double)runs_ratio);
+                
+                // Runs test with improved statistical interpretation
                 // Good randomness should have runs ratio close to 1.0
                 float runs_deviation = fabsf(runs_ratio - 1.0f);
-                if(runs_deviation < 0.05f) {
+                
+                if(runs_deviation < 0.03f) {         // Within 3% - excellent
+                    model->runs_test_result = 0.99f;
+                    FURI_LOG_I(TAG, "Runs test: EXCELLENT (%.2f%% deviation)", (double)(runs_deviation * 100));
+                } else if(runs_deviation < 0.05f) {  // Within 5% - very good
                     model->runs_test_result = 0.95f;
-                } else if(runs_deviation < 0.10f) {
-                    model->runs_test_result = 0.85f;
-                } else if(runs_deviation < 0.20f) {
+                    FURI_LOG_I(TAG, "Runs test: VERY GOOD (%.2f%% deviation)", (double)(runs_deviation * 100));
+                } else if(runs_deviation < 0.10f) {  // Within 10% - good
+                    model->runs_test_result = 0.90f;
+                    FURI_LOG_I(TAG, "Runs test: GOOD (%.2f%% deviation)", (double)(runs_deviation * 100));
+                } else if(runs_deviation < 0.20f) {  // Within 20% - acceptable
                     model->runs_test_result = 0.70f;
-                } else {
-                    model->runs_test_result = 0.50f;
+                    FURI_LOG_W(TAG, "Runs test: ACCEPTABLE (%.2f%% deviation)", (double)(runs_deviation * 100));
+                } else {                             // >20% deviation - poor
+                    model->runs_test_result = 0.30f;
+                    FURI_LOG_W(TAG, "Runs test: POOR (%.2f%% deviation - pattern detected)", (double)(runs_deviation * 100));
                 }
                 
-                // Calculate overall score
-                model->overall_score = (model->chi_square_result + 
-                                       model->bit_frequency_result + 
-                                       model->runs_test_result) / 3.0f;
+                // Calculate overall score with weighted average
+                // Chi-square is most important for detecting bias
+                model->overall_score = (model->chi_square_result * 0.5f + 
+                                       model->bit_frequency_result * 0.3f + 
+                                       model->runs_test_result * 0.2f);
+                
+                FURI_LOG_I(TAG, "Overall quality score: %.1f%% (Chi²: %.1f%%, Bit: %.1f%%, Runs: %.1f%%)", 
+                          (double)(model->overall_score * 100),
+                          (double)(model->chi_square_result * 100),
+                          (double)(model->bit_frequency_result * 100),
+                          (double)(model->runs_test_result * 100));
+                
+                // Log final assessment
+                if(model->overall_score >= 0.95f) {
+                    FURI_LOG_I(TAG, "FINAL ASSESSMENT: EXCELLENT randomness quality");
+                } else if(model->overall_score >= 0.90f) {
+                    FURI_LOG_I(TAG, "FINAL ASSESSMENT: VERY GOOD randomness quality");
+                } else if(model->overall_score >= 0.80f) {
+                    FURI_LOG_I(TAG, "FINAL ASSESSMENT: GOOD randomness quality");
+                } else if(model->overall_score >= 0.70f) {
+                    FURI_LOG_W(TAG, "FINAL ASSESSMENT: ACCEPTABLE randomness quality");
+                } else {
+                    FURI_LOG_W(TAG, "FINAL ASSESSMENT: POOR randomness quality - investigate entropy sources");
+                }
                 
                 // Stop the test
                 app->state->test_running = false;
