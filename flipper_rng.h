@@ -27,7 +27,8 @@ typedef enum {
     EntropySourceSubGhzRSSI = (1 << 7),
     EntropySourceNFCField = (1 << 8),
     EntropySourceInfraredNoise = (1 << 9),
-    EntropySourceAll = 0x3FF,
+    EntropySourceInterruptJitter = (1 << 10),
+    EntropySourceAll = 0x7FF,
 } EntropySource;
 
 // Output mode
@@ -90,6 +91,7 @@ typedef struct {
     uint32_t bits_from_subghz_rssi;
     uint32_t bits_from_nfc_field;
     uint32_t bits_from_infrared;
+    uint32_t bits_from_interrupt_jitter;
 } FlipperRngState;
 
 // Forward declaration
@@ -128,6 +130,7 @@ void flipper_rng_collect_temperature_entropy(FlipperRngState* state);
 void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state);
 void flipper_rng_collect_nfc_field_entropy(FlipperRngState* state);
 void flipper_rng_collect_infrared_entropy(FlipperRngState* state);
+void flipper_rng_collect_interrupt_jitter_entropy(FlipperRngState* state);
 
 // Entropy mixing and output
 void flipper_rng_mix_pool(FlipperRngState* state);

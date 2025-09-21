@@ -129,6 +129,14 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_infrared += 8;
         }
         
+        // Interrupt Jitter - high quality, system-level timing variations
+        if((app->state->entropy_sources & EntropySourceInterruptJitter) && (counter % 15 == 0)) {
+            uint32_t interrupt_noise = flipper_rng_get_interrupt_jitter_noise();
+            flipper_rng_add_entropy(app->state, interrupt_noise, 12);
+            entropy_bits += 12;
+            app->state->bits_from_interrupt_jitter += 12;
+        }
+        
         // Mix the entropy pool periodically
         mix_counter++;
         if(mix_counter >= 32) {

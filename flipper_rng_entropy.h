@@ -6,6 +6,7 @@
 #include <furi_hal_power.h>
 #include <furi_hal_cortex.h>
 #include <furi_hal_infrared.h>
+#include <furi_hal_interrupt.h>
 #include <infrared_worker.h>
 
 // Entropy mixing constants (based on LFSR)
@@ -41,6 +42,7 @@ uint32_t flipper_rng_get_temperature_noise(void);
 uint32_t flipper_rng_get_subghz_rssi_noise(void);
 uint32_t flipper_rng_get_nfc_field_noise(void);
 uint32_t flipper_rng_get_infrared_noise(void);
+uint32_t flipper_rng_get_interrupt_jitter_noise(void);
 
 // Entropy processing
 void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t bits);

@@ -205,6 +205,7 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         app->state->bits_from_subghz_rssi = 0;
         app->state->bits_from_nfc_field = 0;
         app->state->bits_from_infrared = 0;
+        app->state->bits_from_interrupt_jitter = 0;
         memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
         
         // Start the worker thread
@@ -288,7 +289,8 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
                                   app->state->bits_from_button + 
                                   app->state->bits_from_subghz_rssi + 
                                   app->state->bits_from_nfc_field + 
-                                  app->state->bits_from_infrared;
+                                  app->state->bits_from_infrared + 
+                                  app->state->bits_from_interrupt_jitter;
             
             // Build the statistics display
             furi_string_printf(
@@ -337,6 +339,10 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             if(app->state->entropy_sources & EntropySourceInfraredNoise) {
                 furi_string_cat_printf(app->text_box_store, 
                     "IR: %lu bits\n", app->state->bits_from_infrared);
+            }
+            if(app->state->entropy_sources & EntropySourceInterruptJitter) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "IRQ: %lu bits\n", app->state->bits_from_interrupt_jitter);
             }
             
             furi_string_cat_printf(app->text_box_store, 

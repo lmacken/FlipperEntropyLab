@@ -433,3 +433,58 @@ void flipper_rng_collect_infrared_entropy(FlipperRngState* state) {
         flipper_rng_add_entropy(state, ir_noise, 8); // Good quality IR ambient noise
     }
 }
+
+// Get interrupt timing jitter from system interrupt activity
+uint32_t flipper_rng_get_interrupt_jitter_noise(void) {
+    uint32_t entropy = 0;
+    static uint32_t last_isr_time = 0;
+    
+    FURI_LOG_I(TAG, "Interrupt: Starting system interrupt jitter collection");
+    
+    // Sample interrupt timing variations using multiple methods
+    for(int i = 0; i < 8; i++) {
+        uint32_t timing_start = DWT->CYCCNT;
+        
+        // Get total time spent in ISRs (from interrupt accounting system)
+        uint32_t current_isr_time = furi_hal_interrupt_get_time_in_isr_total();
+        uint32_t isr_delta = current_isr_time - last_isr_time;
+        last_isr_time = current_isr_time;
+        
+        // Sample NVIC interrupt activity registers
+        uint32_t nvic_active = NVIC->IABR[0] ^ NVIC->IABR[1]; // Active interrupt bits
+        uint32_t nvic_pending = NVIC->ISPR[0] ^ NVIC->ISPR[1]; // Pending interrupt bits
+        
+        // Get system control block interrupt status
+        uint32_t scb_icsr = SCB->ICSR; // Interrupt Control and State Register
+        uint8_t active_vector = scb_icsr & 0xFF; // Currently active vector number
+        
+        uint32_t timing_end = DWT->CYCCNT;
+        uint32_t sampling_time = timing_end - timing_start;
+        
+        // Mix multiple interrupt timing sources
+        uint32_t interrupt_mix = isr_delta ^ nvic_active ^ nvic_pending ^ 
+                                (scb_icsr >> 8) ^ active_vector ^ sampling_time;
+        
+        // Extract entropy from interrupt timing variations
+        uint8_t jitter_byte = (interrupt_mix ^ (interrupt_mix >> 8) ^ 
+                              (interrupt_mix >> 16) ^ (interrupt_mix >> 24)) & 0xFF;
+        
+        entropy = (entropy << 8) | jitter_byte;
+        
+        FURI_LOG_I(TAG, "Interrupt: Sample %d, ISR_delta=%lu, NVIC=0x%08lX, ICSR=0x%08lX, byte=0x%02X", 
+                  i, isr_delta, nvic_active, scb_icsr, jitter_byte);
+        
+        // Small delay to allow interrupt activity changes
+        furi_delay_us(250);
+    }
+    
+    FURI_LOG_I(TAG, "Interrupt: Collected interrupt jitter entropy=0x%08lX", entropy);
+    return entropy;
+}
+
+void flipper_rng_collect_interrupt_jitter_entropy(FlipperRngState* state) {
+    if(state->entropy_sources & EntropySourceInterruptJitter) {
+        uint32_t interrupt_noise = flipper_rng_get_interrupt_jitter_noise();
+        flipper_rng_add_entropy(state, interrupt_noise, 12); // High quality interrupt timing jitter
+    }
+}

@@ -14,6 +14,7 @@ static const char* entropy_source_names[] = {
     "RF+HW",
     "EM+HW",
     "IR+HW",
+    "IRQ+HW",
     "Custom",
 };
 
@@ -45,6 +46,7 @@ static const uint32_t entropy_source_values[] = {
     EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // RF+HW
     EntropySourceHardwareRNG | EntropySourceNFCField,                            // EM+HW
     EntropySourceHardwareRNG | EntropySourceInfraredNoise,                       // IR+HW
+    EntropySourceHardwareRNG | EntropySourceInterruptJitter,                     // IRQ+HW
     EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage,  // Custom
 };
 
@@ -74,7 +76,10 @@ void flipper_rng_source_changed(VariableItem* item) {
     case 6: // IR + HW RNG (Infrared + Hardware)
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceInfraredNoise;
         break;
-    case 7: // Custom mix
+    case 7: // IRQ + HW RNG (Interrupt + Hardware)
+        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceInterruptJitter;
+        break;
+    case 8: // Custom mix
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage;
         break;
     }
