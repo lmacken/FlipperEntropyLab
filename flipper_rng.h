@@ -25,7 +25,8 @@ typedef enum {
     EntropySourceBatteryVoltage = (1 << 5),
     EntropySourceTemperature = (1 << 6),
     EntropySourceSubGhzRSSI = (1 << 7),
-    EntropySourceAll = 0xFF,
+    EntropySourceNFCField = (1 << 8),
+    EntropySourceAll = 0x1FF,
 } EntropySource;
 
 // Output mode
@@ -86,6 +87,7 @@ typedef struct {
     uint32_t bits_from_temperature;
     uint32_t bits_from_button;
     uint32_t bits_from_subghz_rssi;
+    uint32_t bits_from_nfc_field;
 } FlipperRngState;
 
 // Forward declaration
@@ -122,6 +124,7 @@ void flipper_rng_collect_cpu_jitter(FlipperRngState* state);
 void flipper_rng_collect_battery_entropy(FlipperRngState* state);
 void flipper_rng_collect_temperature_entropy(FlipperRngState* state);
 void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state);
+void flipper_rng_collect_nfc_field_entropy(FlipperRngState* state);
 
 // Entropy mixing and output
 void flipper_rng_mix_pool(FlipperRngState* state);

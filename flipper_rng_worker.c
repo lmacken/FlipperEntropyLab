@@ -113,6 +113,14 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_subghz_rssi += 10;
         }
         
+        // NFC Field - medium quality, electromagnetic field variations
+        if((app->state->entropy_sources & EntropySourceNFCField) && (counter % 20 == 0)) {
+            uint32_t nfc_noise = flipper_rng_get_nfc_field_noise();
+            flipper_rng_add_entropy(app->state, nfc_noise, 6);
+            entropy_bits += 6;
+            app->state->bits_from_nfc_field += 6;
+        }
+        
         // Mix the entropy pool periodically
         mix_counter++;
         if(mix_counter >= 32) {

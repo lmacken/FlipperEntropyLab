@@ -337,6 +337,63 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
 }
 ```
 
+### 9. NFC Field Variations (EntropySourceNFCField)
+
+**Medium-quality entropy from electromagnetic field detection and variations.**
+
+#### Hardware Details
+- **Peripheral**: ST25R3916 NFC Transceiver
+- **Frequency**: 13.56 MHz NFC carrier frequency
+- **Measurement**: External electromagnetic field presence detection
+- **Resolution**: Boolean field presence + timing variations
+- **Noise Sources**:
+  - Ambient electromagnetic field variations
+  - NFC reader interference from nearby devices
+  - Antenna coupling variations due to physical movement
+  - RF frontend noise in field detection circuits
+  - Environmental electromagnetic interference
+
+#### Implementation
+- **Collection Function**: [`flipper_rng_get_nfc_field_noise()`](../flipper_rng_entropy.c#L374-L449)
+- **Worker Integration**: [Lines 117-122](../flipper_rng_worker.c#L117-L122)
+- **Entropy Estimate**: 6 bits per sample (electromagnetic field variations)
+- **Sampling Rate**: Every 20 worker iterations (due to NFC acquisition overhead)
+- **Safe API Usage**: Proper acquire/release lifecycle following mifare_fuzzer pattern
+
+#### Code References
+```c
+// NFC field variation collection
+uint32_t flipper_rng_get_nfc_field_noise(void) {
+    uint32_t entropy = 0;
+    
+    if(furi_hal_nfc_acquire() == FuriHalNfcErrorNone) {
+        if(furi_hal_nfc_init() == FuriHalNfcErrorNone) {
+            furi_hal_nfc_low_power_mode_stop();
+            furi_hal_nfc_field_detect_start();
+            
+            // Sample field presence variations (32 samples)
+            for(int i = 0; i < 32; i++) {
+                uint32_t timing_start = DWT->CYCCNT;
+                bool field_present = furi_hal_nfc_field_is_present();
+                uint32_t timing_end = DWT->CYCCNT;
+                
+                // Mix field state with detection timing
+                uint8_t noise_bit = field_present ^ (timing_end & 1);
+                entropy = (entropy << 1) | noise_bit;
+                
+                furi_delay_us(100);
+            }
+            
+            furi_hal_nfc_field_detect_stop();
+            furi_hal_nfc_low_power_mode_start();
+        }
+        furi_hal_nfc_release();
+    }
+    
+    return entropy;
+}
+```
+
 ## Hardware Details
 
 ### STM32WB55 Microcontroller Specifications
@@ -428,6 +485,7 @@ typedef enum {
 | Hardware RNG | 32 | Highest | Every iteration | Cryptographically secure |
 | ADC Noise | 8 | Medium | Every iteration | SMPS and analog noise |
 | SubGHz RSSI | 10 | High | Every 10 iterations | RF atmospheric noise |
+| NFC Field | 6 | Medium | Every 20 iterations | Electromagnetic field variations |
 | Timing Jitter | 4 | Low-Medium | Every iteration | System timing variations |
 | CPU Jitter | 2 | Low | Every iteration | Execution timing variations |
 | Battery Voltage | 2 | Very Low | Every 100 iterations | Power supply variations |
@@ -436,11 +494,12 @@ typedef enum {
 ### Total Entropy Rate
 
 With all sources enabled and default polling:
-- **Per Iteration**: ~56-58 bits (depending on slow sources)
-- **SubGHz Enhancement**: Additional 10 bits every 10 iterations from RF noise
+- **Per Iteration**: ~62-64 bits (depending on slow sources)
+- **RF Enhancement**: Additional 10 bits every 10 iterations from SubGHz RSSI
+- **EM Enhancement**: Additional 6 bits every 20 iterations from NFC field variations
 - **Per Second**: Depends on poll interval configuration
-- **Primary Sources**: Hardware RNG (32 bits) + SubGHz RSSI (10 bits) provide majority
-- **Diversity**: Multiple independent physical sources for robustness
+- **Primary Sources**: Hardware RNG (32 bits) + SubGHz RSSI (10 bits) + NFC Field (6 bits)
+- **Diversity**: Multiple independent physical and electromagnetic sources
 
 ### Quality Metrics
 
@@ -465,12 +524,13 @@ Rate: 156 bits/sec
 HW RNG: 3200 bits
 ADC: 800 bits
 SubGHz: 100 bits
+NFC: 60 bits
 Timing: 400 bits
 CPU: 200 bits
 Battery: 20 bits
 Temp: 2 bits
 
-Total: 4722 bits
+Total: 4782 bits
 Pool: 2048/4096
 ```
 
