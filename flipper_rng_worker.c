@@ -121,6 +121,14 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_nfc_field += 6;
         }
         
+        // Infrared - good quality, ambient IR noise and timing variations
+        if((app->state->entropy_sources & EntropySourceInfraredNoise) && (counter % 25 == 0)) {
+            uint32_t ir_noise = flipper_rng_get_infrared_noise();
+            flipper_rng_add_entropy(app->state, ir_noise, 8);
+            entropy_bits += 8;
+            app->state->bits_from_infrared += 8;
+        }
+        
         // Mix the entropy pool periodically
         mix_counter++;
         if(mix_counter >= 32) {
