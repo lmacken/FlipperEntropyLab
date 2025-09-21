@@ -24,7 +24,8 @@ typedef enum {
     EntropySourceCPUJitter = (1 << 4),
     EntropySourceBatteryVoltage = (1 << 5),
     EntropySourceTemperature = (1 << 6),
-    EntropySourceAll = 0x7F,
+    EntropySourceSubGhzRSSI = (1 << 7),
+    EntropySourceAll = 0xFF,
 } EntropySource;
 
 // Output mode
@@ -70,6 +71,21 @@ typedef struct {
     // Statistics
     uint32_t samples_collected;
     uint32_t last_entropy_bits;
+    uint32_t start_time;  // Track when generation started
+    float entropy_rate;   // Bits per second
+    
+    // Histogram data for byte distribution (0-255)
+    uint32_t byte_histogram[16];  // 16 bins for visualization
+    
+    // Per-source bit counters (track bits collected from each source)
+    uint32_t bits_from_hw_rng;
+    uint32_t bits_from_adc;
+    uint32_t bits_from_timing;
+    uint32_t bits_from_cpu_jitter;
+    uint32_t bits_from_battery;
+    uint32_t bits_from_temperature;
+    uint32_t bits_from_button;
+    uint32_t bits_from_subghz_rssi;
 } FlipperRngState;
 
 // Forward declaration
@@ -105,6 +121,7 @@ void flipper_rng_collect_timing_entropy(FlipperRngState* state);
 void flipper_rng_collect_cpu_jitter(FlipperRngState* state);
 void flipper_rng_collect_battery_entropy(FlipperRngState* state);
 void flipper_rng_collect_temperature_entropy(FlipperRngState* state);
+void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state);
 
 // Entropy mixing and output
 void flipper_rng_mix_pool(FlipperRngState* state);

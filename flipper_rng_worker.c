@@ -32,6 +32,10 @@ int32_t flipper_rng_worker_thread(void* context) {
     
     uint32_t counter = 0;
     uint32_t mix_counter = 0;
+    uint32_t total_entropy_bits = 0;
+    
+    // Record start time for rate calculation
+    app->state->start_time = furi_get_tick();
     
     FURI_LOG_I(TAG, "Worker entering main loop, is_running=%d", app->state->is_running);
     
@@ -40,6 +44,12 @@ int32_t flipper_rng_worker_thread(void* context) {
         if(counter % 100 == 0) {
             FURI_LOG_I(TAG, "Worker running: cycle=%lu, bytes=%lu, is_running=%d", 
                        counter, app->state->bytes_generated, app->state->is_running);
+            
+            // Calculate entropy rate
+            uint32_t elapsed_ms = furi_get_tick() - app->state->start_time;
+            if(elapsed_ms > 0) {
+                app->state->entropy_rate = (float)total_entropy_bits * 1000.0f / (float)elapsed_ms;
+            }
         }
         
         // Collect entropy from enabled sources
@@ -50,6 +60,7 @@ int32_t flipper_rng_worker_thread(void* context) {
             uint32_t hw_random = furi_hal_random_get();
             flipper_rng_add_entropy(app->state, hw_random, 32);
             entropy_bits += 32;
+            app->state->bits_from_hw_rng += 32;
         }
         
         // ADC noise - medium quality
@@ -58,6 +69,7 @@ int32_t flipper_rng_worker_thread(void* context) {
                 uint32_t adc_noise = flipper_rng_get_adc_noise(app->state->adc_handle);
                 flipper_rng_add_entropy(app->state, adc_noise, 8);
                 entropy_bits += 8;
+                app->state->bits_from_adc += 8;
             }
         }
         
@@ -66,6 +78,7 @@ int32_t flipper_rng_worker_thread(void* context) {
             uint32_t timing = flipper_rng_get_timing_jitter();
             flipper_rng_add_entropy(app->state, timing, 4);
             entropy_bits += 4;
+            app->state->bits_from_timing += 4;
         }
         
         // CPU jitter - low quality but unique
@@ -73,6 +86,7 @@ int32_t flipper_rng_worker_thread(void* context) {
             uint32_t cpu_jitter = flipper_rng_get_cpu_jitter();
             flipper_rng_add_entropy(app->state, cpu_jitter, 2);
             entropy_bits += 2;
+            app->state->bits_from_cpu_jitter += 2;
         }
         
         // Battery voltage - very low quality, slow changing
@@ -80,6 +94,7 @@ int32_t flipper_rng_worker_thread(void* context) {
             uint32_t battery = flipper_rng_get_battery_noise();
             flipper_rng_add_entropy(app->state, battery, 2);
             entropy_bits += 2;
+            app->state->bits_from_battery += 2;
         }
         
         // Temperature - very low quality, very slow changing
@@ -87,6 +102,15 @@ int32_t flipper_rng_worker_thread(void* context) {
             uint32_t temp = flipper_rng_get_temperature_noise();
             flipper_rng_add_entropy(app->state, temp, 1);
             entropy_bits += 1;
+            app->state->bits_from_temperature += 1;
+        }
+        
+        // SubGHz RSSI - high quality, but slower due to frequency switching
+        if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 10 == 0)) {
+            uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise();
+            flipper_rng_add_entropy(app->state, rssi_noise, 10);
+            entropy_bits += 10;
+            app->state->bits_from_subghz_rssi += 10;
         }
         
         // Mix the entropy pool periodically
@@ -97,13 +121,28 @@ int32_t flipper_rng_worker_thread(void* context) {
         }
         
         // Extract mixed bytes from the pool
-        for(int i = 0; i < 4 && buffer_pos < OUTPUT_BUFFER_SIZE; i++) {
-            output_buffer[buffer_pos++] = flipper_rng_extract_random_byte(app->state);
+        // Generate more bytes per iteration for better throughput
+        int bytes_to_generate = 16; // Generate 16 bytes per iteration
+        for(int i = 0; i < bytes_to_generate && buffer_pos < OUTPUT_BUFFER_SIZE; i++) {
+            uint8_t random_byte = flipper_rng_extract_random_byte(app->state);
+            output_buffer[buffer_pos++] = random_byte;
             app->state->bytes_generated++;
+            
+            // Update histogram (16 bins, so divide byte value by 16)
+            app->state->byte_histogram[random_byte >> 4]++;
         }
         
-        // Reset buffer when full or output data
-        if(buffer_pos >= OUTPUT_BUFFER_SIZE) {
+        // Output data when we have some (more frequent for UART)
+        bool should_output = false;
+        if(app->state->output_mode == OutputModeUART) {
+            // For UART, send smaller chunks more frequently (every 32 bytes)
+            should_output = (buffer_pos >= 32);
+        } else {
+            // For other modes, wait for full buffer
+            should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
+        }
+        
+        if(should_output) {
             // Output data based on selected mode
             if(app->state->output_mode == OutputModeUSB) {
                 // Send to USB CDC interface 1 (should work now in dual mode)
@@ -144,6 +183,7 @@ int32_t flipper_rng_worker_thread(void* context) {
         
         // Update stats to reflect what we're actually doing
         app->state->samples_collected = counter;
+        total_entropy_bits += entropy_bits;
         
         // Update quality metric based on actual entropy pool
         if(counter % 100 == 0) {

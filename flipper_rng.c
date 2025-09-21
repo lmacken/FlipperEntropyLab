@@ -195,6 +195,15 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         // Reset counters for fresh start
         app->state->bytes_generated = 0;
         app->state->samples_collected = 0;
+        app->state->bits_from_hw_rng = 0;
+        app->state->bits_from_adc = 0;
+        app->state->bits_from_timing = 0;
+        app->state->bits_from_cpu_jitter = 0;
+        app->state->bits_from_battery = 0;
+        app->state->bits_from_temperature = 0;
+        app->state->bits_from_button = 0;
+        app->state->bits_from_subghz_rssi = 0;
+        memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
         
         // Start the worker thread
             app->state->is_running = true;
@@ -266,26 +275,66 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
     case FlipperRngMenuStats:
         {
             furi_string_reset(app->text_box_store);
-            // Count active sources
-            uint8_t active_count = 0;
-            for(int i = 0; i < 7; i++) {
-                if(app->state->entropy_sources & (1 << i)) active_count++;
-            }
             
+            // Calculate total entropy bits
+            uint32_t total_bits = app->state->bits_from_hw_rng + 
+                                  app->state->bits_from_adc + 
+                                  app->state->bits_from_timing + 
+                                  app->state->bits_from_cpu_jitter + 
+                                  app->state->bits_from_battery + 
+                                  app->state->bits_from_temperature + 
+                                  app->state->bits_from_button + 
+                                  app->state->bits_from_subghz_rssi;
+            
+            // Build the statistics display
             furi_string_printf(
                 app->text_box_store,
-                "FlipperRNG Statistics\n\n"
-                "Bytes Generated: %lu\n"
-                "Samples Collected: %lu\n"
-                "Active Sources: %d\n"
-                "Pool Position: %zu/%d\n"
-                "Implementation: Multi-source\n",
+                "=== RNG Statistics ===\n"
+                "Output: %lu bytes\n"
+                "Rate: %d bits/sec\n\n"
+                "--- Entropy Sources ---\n",
                 app->state->bytes_generated,
-                app->state->samples_collected,
-                active_count,
+                (int)app->state->entropy_rate
+            );
+            
+            // Show each source with bits collected
+            if(app->state->entropy_sources & EntropySourceHardwareRNG) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "HW RNG: %lu bits\n", app->state->bits_from_hw_rng);
+            }
+            if(app->state->entropy_sources & EntropySourceADC) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "ADC: %lu bits\n", app->state->bits_from_adc);
+            }
+            if(app->state->entropy_sources & EntropySourceTiming) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "Timing: %lu bits\n", app->state->bits_from_timing);
+            }
+            if(app->state->entropy_sources & EntropySourceCPUJitter) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "CPU: %lu bits\n", app->state->bits_from_cpu_jitter);
+            }
+            if(app->state->entropy_sources & EntropySourceBatteryVoltage) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "Battery: %lu bits\n", app->state->bits_from_battery);
+            }
+            if(app->state->entropy_sources & EntropySourceTemperature) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "Temp: %lu bits\n", app->state->bits_from_temperature);
+            }
+            if(app->state->entropy_sources & EntropySourceSubGhzRSSI) {
+                furi_string_cat_printf(app->text_box_store, 
+                    "SubGHz: %lu bits\n", app->state->bits_from_subghz_rssi);
+            }
+            
+            furi_string_cat_printf(app->text_box_store, 
+                "\nTotal: %lu bits\n"
+                "Pool: %zu/%d\n",
+                total_bits,
                 app->state->entropy_pool_pos,
                 RNG_POOL_SIZE
             );
+            
             text_box_set_text(app->text_box, furi_string_get_cstr(app->text_box_store));
             view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewOutput);
         }
@@ -357,6 +406,15 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
     app->state->samples_collected = 0;
+    app->state->bits_from_hw_rng = 0;
+    app->state->bits_from_adc = 0;
+    app->state->bits_from_timing = 0;
+    app->state->bits_from_cpu_jitter = 0;
+    app->state->bits_from_battery = 0;
+    app->state->bits_from_temperature = 0;
+    app->state->bits_from_button = 0;
+    memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
+    app->state->entropy_rate = 0.0f;
     app->state->adc_handle = NULL;
     app->state->serial_handle = NULL;
     app->state->test_buffer = NULL;

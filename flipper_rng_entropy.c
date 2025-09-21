@@ -36,6 +36,12 @@ void flipper_rng_deinit_entropy_sources(FlipperRngState* state) {
         furi_hal_adc_release(state->adc_handle);
         state->adc_handle = NULL;
     }
+    
+    // Deinitialize SubGHz devices if they were used
+    if(state->entropy_sources & EntropySourceSubGhzRSSI) {
+        FURI_LOG_I(TAG, "Deinitializing SubGHz devices");
+        subghz_devices_deinit();
+    }
 }
 
 // Get hardware random number
@@ -263,5 +269,103 @@ void flipper_rng_collect_temperature_entropy(FlipperRngState* state) {
     if(state->entropy_sources & EntropySourceTemperature) {
         uint32_t temp_noise = flipper_rng_get_temperature_noise();
         flipper_rng_add_entropy(state, temp_noise, 4); // Temperature changes slowly
+    }
+}
+
+// Get SubGHz RSSI noise using proper device API
+uint32_t flipper_rng_get_subghz_rssi_noise(void) {
+    uint32_t entropy = 0;
+    static const SubGhzDevice* device = NULL;
+    static bool device_initialized = false;
+    
+    FURI_LOG_D(TAG, "SubGHz RSSI: Starting device-based noise collection");
+    
+    // Initialize SubGHz device on first use
+    if(!device_initialized) {
+        FURI_LOG_I(TAG, "SubGHz RSSI: Initializing SubGHz devices");
+        subghz_devices_init();
+        device = subghz_devices_get_by_name("cc1101_int");
+        device_initialized = true;
+        
+        if(!device) {
+            FURI_LOG_W(TAG, "SubGHz RSSI: Could not get cc1101_int device");
+        }
+    }
+    
+    // Sample multiple frequencies for diversity
+    uint32_t frequencies[] = {
+        315000000,  // 315 MHz (ISM band)
+        433920000,  // 433.92 MHz (ISM band)  
+        868300000,  // 868.3 MHz (ISM band)
+        915000000   // 915 MHz (ISM band)
+    };
+    
+    for(int i = 0; i < 4; i++) {
+        uint8_t noise_byte = 0;
+        uint32_t timing_start = DWT->CYCCNT;
+        
+        if(device) {
+            // Check if frequency is valid for this region
+            bool freq_valid = subghz_devices_is_frequency_valid(device, frequencies[i]);
+            
+            if(freq_valid) {
+                // Try to begin device operation safely
+                if(subghz_devices_begin(device)) {
+                    // Set frequency
+                    uint32_t actual_freq = subghz_devices_set_frequency(device, frequencies[i]);
+                    
+                    // Small delay for stabilization
+                    furi_delay_us(500);
+                    
+                    // Get RSSI and LQI readings
+                    float rssi_dbm = subghz_devices_get_rssi(device);
+                    uint8_t lqi = subghz_devices_get_lqi(device);
+                    
+                    // End device operation
+                    subghz_devices_end(device);
+                    
+                    FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu->%lu Hz, RSSI=%.1f dBm, LQI=%u", 
+                              frequencies[i], actual_freq, (double)rssi_dbm, lqi);
+                    
+                    // Convert RSSI to entropy
+                    union { float f; uint32_t i; } rssi_conv = { .f = rssi_dbm };
+                    uint32_t timing_end = DWT->CYCCNT;
+                    uint32_t timing_noise = timing_end - timing_start;
+                    
+                    noise_byte = (rssi_conv.i & 0xFF) ^ lqi ^ (timing_noise & 0xFF);
+                } else {
+                    FURI_LOG_W(TAG, "SubGHz RSSI: Could not begin device for freq %lu", frequencies[i]);
+                    // Fallback to frequency + timing entropy
+                    uint32_t timing_end = DWT->CYCCNT;
+                    noise_byte = ((frequencies[i] >> 16) ^ (timing_end - timing_start)) & 0xFF;
+                }
+            } else {
+                FURI_LOG_D(TAG, "SubGHz RSSI: Freq %lu Hz not valid in this region", frequencies[i]);
+                // Use frequency validation timing as entropy
+                uint32_t timing_end = DWT->CYCCNT;
+                noise_byte = ((frequencies[i] >> 8) ^ (timing_end - timing_start)) & 0xFF;
+            }
+        } else {
+            // Device not available, use enhanced timing + frequency entropy
+            uint32_t timing_end = DWT->CYCCNT;
+            uint32_t freq_entropy = frequencies[i] ^ (frequencies[i] >> 16);
+            noise_byte = (freq_entropy ^ (timing_end - timing_start)) & 0xFF;
+        }
+        
+        entropy = (entropy << 8) | noise_byte;
+        
+        // Small delay between samples
+        furi_delay_us(200);
+    }
+    
+    FURI_LOG_D(TAG, "SubGHz RSSI: Collected entropy=0x%08lX", entropy);
+    
+    return entropy;
+}
+
+void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state) {
+    if(state->entropy_sources & EntropySourceSubGhzRSSI) {
+        uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise();
+        flipper_rng_add_entropy(state, rssi_noise, 10); // High quality RF noise
     }
 }

@@ -11,6 +11,7 @@ static const char* entropy_source_names[] = {
     "HW RNG",
     "ADC+HW",
     "Timing",
+    "RF+HW",
     "Custom",
 };
 
@@ -39,7 +40,8 @@ static const uint32_t entropy_source_values[] = {
     EntropySourceHardwareRNG,                                                      // HW RNG
     EntropySourceHardwareRNG | EntropySourceADC,                                  // ADC+HW
     EntropySourceTiming | EntropySourceCPUJitter | EntropySourceButtonTiming,      // Timing
-    EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage,  // Mix
+    EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // RF+HW
+    EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage,  // Custom
 };
 
 void flipper_rng_source_changed(VariableItem* item) {
@@ -59,7 +61,10 @@ void flipper_rng_source_changed(VariableItem* item) {
     case 3: // Timing based
         app->state->entropy_sources = EntropySourceTiming | EntropySourceCPUJitter | EntropySourceButtonTiming;
         break;
-    case 4: // Custom mix
+    case 4: // RF + HW RNG
+        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceSubGhzRSSI;
+        break;
+    case 5: // Custom mix
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage;
         break;
     }
@@ -195,7 +200,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             canvas_draw_str(canvas, 2, 20, "Status: Stopped");
             canvas_draw_str(canvas, 2, 30, "Press Back to return");
         }
-    } else {
+    } else if(model->viz_mode == 1) {
         // MODE 1: Full screen random walk - CLEAN VERSION
         if(model->is_running) {
             // Pure visualization - no text overlays
@@ -235,6 +240,54 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             canvas_draw_str(canvas, 30, 30, "Start generator");
             canvas_draw_str(canvas, 40, 40, "for visualization");
         }
+    } else if(model->viz_mode == 2) {
+        // MODE 2: Histogram visualization
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 2, 8, "Byte Distribution");
+        
+        canvas_set_font(canvas, FontSecondary);
+        
+        if(model->is_running) {
+            // Find max value for scaling
+            uint32_t max_val = 1;
+            for(int i = 0; i < 16; i++) {
+                if(model->histogram[i] > max_val) {
+                    max_val = model->histogram[i];
+                }
+            }
+            
+            // Draw histogram bars
+            int bar_width = 7;
+            int bar_spacing = 1;
+            int max_height = 40;
+            int base_y = 55;
+            
+            for(int i = 0; i < 16; i++) {
+                int bar_height = (model->histogram[i] * max_height) / max_val;
+                if(bar_height > 0) {
+                    int x = 2 + i * (bar_width + bar_spacing);
+                    // Draw bar
+                    canvas_draw_box(canvas, x, base_y - bar_height, bar_width, bar_height);
+                }
+            }
+            
+            // Draw axis
+            canvas_draw_line(canvas, 0, base_y + 1, 127, base_y + 1);
+            
+            // Labels for bins
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 63, "0");
+            canvas_draw_str(canvas, 60, 63, "7F");
+            canvas_draw_str(canvas, 115, 63, "FF");
+            
+            // Show total bytes analyzed
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
+            canvas_draw_str(canvas, 70, 8, buffer);
+        } else {
+            canvas_draw_str(canvas, 20, 30, "Start generator");
+            canvas_draw_str(canvas, 20, 40, "to see histogram");
+        }
     }
 }
 
@@ -251,7 +304,7 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
         
         if(event->key == InputKeyOk) {
             if(app->state->is_running) {
-                // Toggle visualization mode
+                // Toggle visualization mode between 0 and 1
                 FURI_LOG_I(TAG, "OK button pressed - toggling visualization mode");
                 with_view_model(
                     app->visualization_view,
@@ -269,14 +322,30 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
                     true
                 );
                 consumed = true;
-            } else {
-                FURI_LOG_I(TAG, "Visualization: OK pressed while stopped, going back");
-                return false; // Return to menu when OK is pressed while stopped
             }
+        } else if(event->key == InputKeyUp) {
+            // Switch to histogram mode (mode 2)
+            FURI_LOG_I(TAG, "Up button pressed - showing histogram");
+            with_view_model(
+                app->visualization_view,
+                FlipperRngVisualizationModel* model,
+                {
+                    model->viz_mode = 2; // Histogram mode
+                    // Copy histogram data
+                    for(int i = 0; i < 16; i++) {
+                        model->histogram[i] = app->state->byte_histogram[i];
+                    }
+                },
+                true
+            );
+            consumed = true;
+        } else {
+            FURI_LOG_I(TAG, "Visualization: OK pressed while stopped, going back");
+            return false; // Return to menu when OK is pressed while stopped
         }
     }
     
-    return consumed || true;
+    return consumed;
 }
 
 void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t length) {
