@@ -5,7 +5,6 @@
 #include <furi_hal_adc.h>
 #include <furi_hal_power.h>
 #include <furi_hal_cortex.h>
-#include <lib/subghz/devices/devices.h>
 
 // Entropy mixing constants (based on LFSR)
 #define ENTROPY_MIX_TAP1 0x80200003

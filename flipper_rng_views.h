@@ -10,9 +10,10 @@ typedef struct {
     size_t data_pos;
     bool is_running;
     uint32_t bytes_generated;
-    uint8_t viz_mode;  // 0 = original, 1 = full screen walk
+    uint8_t viz_mode;  // 0 = original, 1 = full screen walk, 2 = histogram
     uint8_t walk_x;
     uint8_t walk_y;
+    uint32_t histogram[16];  // Histogram data for 16 bins
 } FlipperRngVisualizationModel;
 
 // Test model

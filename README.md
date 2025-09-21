@@ -4,6 +4,16 @@ FlipperRNG is a sophisticated random number generator for the Flipper Zero that 
 
 ## Features
 
+## Documentation
+
+📚 **[Complete Documentation](docs/)** - Comprehensive technical documentation including:
+
+- **[Entropy Sources Guide](docs/entropy-sources.md)** - Detailed analysis of all entropy sources, hardware specifications, and implementation details
+- **[Technical Reference](docs/technical-reference.md)** - API documentation, data structures, performance characteristics, and troubleshooting
+- **[Documentation Index](docs/README.md)** - Quick reference and getting started guide
+
+The documentation includes detailed code references, hardware specifications, quality assessments, and security considerations for each entropy source.
+
 ### Multiple Entropy Sources
 - **Hardware RNG**: STM32's built-in true random number generator
 - **ADC Noise**: Analog-to-digital converter least significant bit noise

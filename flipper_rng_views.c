@@ -438,7 +438,7 @@ void flipper_rng_test_draw_callback(Canvas* canvas, void* context) {
         canvas_draw_str(canvas, 2, 20, "Select test size:");
         
         // Size options with selection indicator - simplified layout
-        const char* sizes[] = {"16 KB", "32 KB", "64 KB"};
+        const char* sizes[] = {"4 KB", "8 KB", "16 KB"};
         const char* desc[] = {"Quick", "Standard", "Thorough"};
         
         for(int i = 0; i < 3; i++) {
@@ -538,18 +538,18 @@ bool flipper_rng_test_input_callback(InputEvent* event, void* context) {
             consumed = true;
         } else if(event->key == InputKeyOk) {
             // Get selected size
-            size_t test_size = 16384; // Default 16KB
+            size_t test_size = 4096; // Default 4KB (safer for limited RAM)
             
             with_view_model(
                 app->test_view,
                 FlipperRngTestModel* model,
                 {
-                    // Determine size based on selection
+                    // Determine size based on selection - reduced sizes for stability
                     switch(model->selected_size) {
-                        case 0: test_size = 16384; break;    // 16KB
-                        case 1: test_size = 32768; break;    // 32KB
-                        case 2: test_size = 65536; break;    // 64KB
-                        default: test_size = 16384; break;   // Fallback to 16KB
+                        case 0: test_size = 4096; break;     // 4KB - Quick test
+                        case 1: test_size = 8192; break;     // 8KB - Standard test  
+                        case 2: test_size = 16384; break;    // 16KB - Thorough test
+                        default: test_size = 4096; break;    // Fallback to 4KB
                     }
                     
                     if(!model->is_testing) {
@@ -583,7 +583,21 @@ bool flipper_rng_test_input_callback(InputEvent* event, void* context) {
             
             app->state->test_buffer = malloc(test_size);
             if(!app->state->test_buffer) {
-                FURI_LOG_E(TAG, "Failed to allocate test buffer of size %u", test_size);
+                FURI_LOG_E(TAG, "Failed to allocate test buffer of size %zu", test_size);
+                FURI_LOG_E(TAG, "Insufficient memory for test. Try smaller test size.");
+                
+                // Update UI to show error
+                with_view_model(
+                    app->test_view,
+                    FlipperRngTestModel* model,
+                    {
+                        model->is_testing = false;
+                        model->test_complete = false;
+                        model->bytes_collected = 0;
+                        model->test_progress = 0.0f;
+                    },
+                    true
+                );
                 return false;
             }
             
@@ -646,11 +660,15 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                 model->is_testing = false;
                 model->test_complete = true;
                 
-                // Run statistical tests
+                // Run statistical tests with safety checks
+                FURI_LOG_I(TAG, "Running statistical tests on %zu bytes", app->state->test_buffer_size);
+                
                 // Chi-square test for byte distribution
                 uint32_t byte_counts[256] = {0};
-                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
-                    byte_counts[app->state->test_buffer[i]]++;
+                for(size_t i = 0; i < app->state->test_buffer_size && i < 65536; i++) { // Bounds check
+                    if(app->state->test_buffer && i < app->state->test_buffer_size) {
+                        byte_counts[app->state->test_buffer[i]]++;
+                    }
                 }
                 
                 float expected = (float)app->state->test_buffer_size / 256.0f;
@@ -680,12 +698,14 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                     model->chi_square_result = 0.50f;
                 }
                 
-                // Bit frequency test
+                // Bit frequency test with safety checks
                 uint32_t ones = 0;
-                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
-                    uint8_t byte = app->state->test_buffer[i];
-                    for(int b = 0; b < 8; b++) {
-                        if(byte & (1 << b)) ones++;
+                for(size_t i = 0; i < app->state->test_buffer_size && i < 65536; i++) { // Bounds check
+                    if(app->state->test_buffer && i < app->state->test_buffer_size) {
+                        uint8_t byte = app->state->test_buffer[i];
+                        for(int b = 0; b < 8; b++) {
+                            if(byte & (1 << b)) ones++;
+                        }
                     }
                 }
                 uint32_t total_bits = app->state->test_buffer_size * 8;
@@ -703,25 +723,34 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
                     model->bit_frequency_result = 0.50f;
                 }
                 
-                // Runs test (sequences of same bits)
+                // Runs test (sequences of same bits) with safety checks
                 uint32_t runs = 0;
                 bool last_bit = false;
-                for(size_t i = 0; i < app->state->test_buffer_size; i++) {
-                    uint8_t byte = app->state->test_buffer[i];
-                    for(int b = 0; b < 8; b++) {
-                        bool bit = (byte >> b) & 1;
-                        if(i == 0 && b == 0) {
-                            last_bit = bit;
-                        } else if(bit != last_bit) {
-                            runs++;
-                            last_bit = bit;
+                bool first_bit = true;
+                for(size_t i = 0; i < app->state->test_buffer_size && i < 65536; i++) { // Bounds check
+                    if(app->state->test_buffer && i < app->state->test_buffer_size) {
+                        uint8_t byte = app->state->test_buffer[i];
+                        for(int b = 0; b < 8; b++) {
+                            bool bit = (byte >> b) & 1;
+                            if(first_bit) {
+                                last_bit = bit;
+                                first_bit = false;
+                            } else if(bit != last_bit) {
+                                runs++;
+                                last_bit = bit;
+                            }
                         }
                     }
                 }
                 
                 // Expected runs for random data is approximately total_bits/2
                 uint32_t expected_runs = total_bits / 2;
-                float runs_ratio = (float)runs / (float)expected_runs;
+                float runs_ratio = 0.0f;
+                if(expected_runs > 0 && total_bits > 0) {
+                    runs_ratio = (float)runs / (float)expected_runs;
+                } else {
+                    FURI_LOG_W(TAG, "Invalid test data: total_bits=%lu, expected_runs=%lu", total_bits, expected_runs);
+                }
                 
                 // Good randomness should have runs ratio close to 1.0
                 float runs_deviation = fabsf(runs_ratio - 1.0f);
