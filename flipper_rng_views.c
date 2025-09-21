@@ -18,7 +18,6 @@ static const char* entropy_source_names[] = {
 static const char* output_mode_names[] = {
     "USB",
     "UART",
-    "Visual",
     "File",
 };
 
@@ -29,6 +28,17 @@ static const char* poll_interval_names[] = {
     "50ms",
     "100ms",
     "500ms",
+};
+
+static const char* visual_refresh_names[] = {
+    "100ms",
+    "200ms",
+    "500ms", 
+    "1s",
+};
+
+static const uint32_t visual_refresh_values[] = {
+    100, 200, 500, 1000,
 };
 
 static const uint32_t poll_interval_values[] = {
@@ -88,6 +98,14 @@ void flipper_rng_poll_interval_changed(VariableItem* item) {
     variable_item_set_current_value_text(item, poll_interval_names[index]);
 }
 
+void flipper_rng_visual_refresh_changed(VariableItem* item) {
+    FlipperRngApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    
+    app->state->visual_refresh_ms = visual_refresh_values[index];
+    variable_item_set_current_value_text(item, visual_refresh_names[index]);
+}
+
 void flipper_rng_setup_config_view(FlipperRngApp* app) {
     VariableItem* item;
     
@@ -139,6 +157,25 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     }
     variable_item_set_current_value_index(item, poll_index);
     variable_item_set_current_value_text(item, poll_interval_names[poll_index]);
+    
+    // Visual refresh rate
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Visual Rate",
+        COUNT_OF(visual_refresh_names),
+        flipper_rng_visual_refresh_changed,
+        app
+    );
+    // Find the index for the current visual refresh rate
+    uint32_t visual_index = 0;
+    for(uint32_t i = 0; i < COUNT_OF(visual_refresh_values); i++) {
+        if(visual_refresh_values[i] == app->state->visual_refresh_ms) {
+            visual_index = i;
+            break;
+        }
+    }
+    variable_item_set_current_value_index(item, visual_index);
+    variable_item_set_current_value_text(item, visual_refresh_names[visual_index]);
 }
 
 // Visualization drawing

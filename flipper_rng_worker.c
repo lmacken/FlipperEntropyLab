@@ -16,8 +16,8 @@
 int32_t flipper_rng_worker_thread(void* context) {
     FlipperRngApp* app = context;
     
-    FURI_LOG_I(TAG, "Worker thread started - V3: Multi-source entropy");
-    FURI_LOG_I(TAG, "Output mode: %d (0=USB, 1=UART, 2=Viz)", app->state->output_mode);
+    FURI_LOG_I(TAG, "Worker thread started - V4: Multi-source entropy with always-on visualization");
+    FURI_LOG_I(TAG, "Output mode: %d (0=USB, 1=UART, 2=File) - Visualization always available", app->state->output_mode);
     FURI_LOG_I(TAG, "Entropy sources: 0x%02lX", app->state->entropy_sources);
     
     // Initialize entropy sources
@@ -131,7 +131,7 @@ int32_t flipper_rng_worker_thread(void* context) {
             // For UART, send smaller chunks more frequently (every 32 bytes)
             should_output = (buffer_pos >= 32);
         } else {
-            // For other modes, wait for full buffer
+            // For USB and File modes, wait for full buffer
             should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
         }
         
@@ -191,24 +191,25 @@ int32_t flipper_rng_worker_thread(void* context) {
             sources >>= 1;
         }
         
-        // Update visualization more frequently for smooth animation
-        // Update every 10 iterations or when we have enough new data
-        if(app->state->output_mode == OutputModeVisualization) {
+        // Update visualization with responsive timing - always available regardless of output mode
+        if(true) {  // Always update visualization data for monitoring
             static uint32_t vis_counter = 0;
+            static uint32_t last_vis_update = 0;
             vis_counter++;
             
-            // Update based on poll rate:
-            // Fast polls (1-10ms): update every 10 iterations
-            // Medium polls (50ms): update every 2 iterations  
-            // Slow polls (100ms+): update every iteration
+            // Use configurable visualization refresh rate
+            uint32_t target_vis_interval_ms = app->state->visual_refresh_ms;
+            uint32_t current_time = furi_get_tick();
+            
             bool should_update = false;
-            if(app->state->poll_interval_ms <= 10) {
-                should_update = (vis_counter % 10 == 0);
-            } else if(app->state->poll_interval_ms <= 50) {
-                should_update = (vis_counter % 2 == 0);
-            } else {
-                should_update = true;  // Update every iteration for slow polls
+            
+            // Time-based updates using configurable refresh rate only
+            if(current_time - last_vis_update >= target_vis_interval_ms) {
+                should_update = true;
+                last_vis_update = current_time;
             }
+            
+            // No overrides - respect user's visual refresh rate setting completely
             
             if(should_update) {
                 // Generate fresh random data for visualization
@@ -218,6 +219,9 @@ int32_t flipper_rng_worker_thread(void* context) {
                     vis_buffer[i] = flipper_rng_extract_random_byte(app->state);
                 }
                 flipper_rng_visualization_update(app, vis_buffer, 128);
+                
+                FURI_LOG_I(TAG, "Visualization updated: poll=%lums, visual_rate=%lums, vis_counter=%lu (always-on monitoring)", 
+                          app->state->poll_interval_ms, app->state->visual_refresh_ms, vis_counter);
             }
         }
         

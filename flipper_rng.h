@@ -26,11 +26,10 @@ typedef enum {
     EntropySourceAll = 0x3F,
 } EntropySource;
 
-// Output mode
+// Output mode - Visualization is always available, not an exclusive output mode
 typedef enum {
     OutputModeUSB,
     OutputModeUART,
-    OutputModeVisualization,
     OutputModeFile,
 } OutputMode;
 
@@ -49,6 +48,7 @@ typedef struct {
     uint32_t entropy_sources;
     OutputMode output_mode;
     uint32_t poll_interval_ms;
+    uint32_t visual_refresh_ms;  // Configurable visualization refresh rate
     bool is_running;
     uint8_t entropy_pool[RNG_POOL_SIZE];
     size_t entropy_pool_pos;

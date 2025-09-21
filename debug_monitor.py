@@ -42,11 +42,27 @@ def monitor_logs(port, baudrate=230400):
         # Clear any pending data
         ser.read_all()
         
-        # Send log command
+        # Enable logging with proper sequence
+        print("Setting up debug logging...")
         ser.write(b'\r\n')
-        time.sleep(0.1)
+        time.sleep(0.3)
+        
+        # First set log level to info (this is crucial!)
+        print("Setting log level to info...")
+        ser.write(b'log info\r\n')  # Set log level to info
+        time.sleep(0.5)
+        
+        # Clear any output from the log level command
+        ser.read_all()
+        
+        # Now start log streaming
+        print("Starting log stream...")
         ser.write(b'log\r\n')
-        time.sleep(0.1)
+        time.sleep(0.3)
+        
+        # Check running processes
+        ser.write(b'ps\r\n')
+        time.sleep(0.2)
         
         print("Monitoring logs (Ctrl+C to exit)...")
         print("-" * 60)

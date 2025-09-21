@@ -392,8 +392,9 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     }
     app->state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->state->entropy_sources = EntropySourceAll;
-    app->state->output_mode = OutputModeVisualization;
+    app->state->output_mode = OutputModeUSB;  // Default to USB, visualization always available
     app->state->poll_interval_ms = 10;
+    app->state->visual_refresh_ms = 200;  // Default 200ms visual refresh rate
     app->state->is_running = false;
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
