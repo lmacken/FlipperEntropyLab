@@ -10,12 +10,9 @@ static const char* entropy_source_names[] = {
     "All",
     "HW RNG",
     "ADC+HW",
-    "Timing",
     "RF+HW",
-    "EM+HW",
     "IR+HW",
-    "IRQ+HW",
-    "Custom",
+    "Env Only",
 };
 
 static const char* output_mode_names[] = {
@@ -39,15 +36,12 @@ static const uint32_t poll_interval_values[] = {
 };
 
 static const uint32_t entropy_source_values[] = {
-    EntropySourceAll,                                                              // All
-    EntropySourceHardwareRNG,                                                      // HW RNG
+    EntropySourceAll,                                                              // All 6 sources
+    EntropySourceHardwareRNG,                                                      // HW RNG only
     EntropySourceHardwareRNG | EntropySourceADC,                                  // ADC+HW
-    EntropySourceTiming | EntropySourceCPUJitter | EntropySourceButtonTiming,      // Timing
     EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // RF+HW
-    EntropySourceHardwareRNG | EntropySourceNFCField,                            // EM+HW
     EntropySourceHardwareRNG | EntropySourceInfraredNoise,                       // IR+HW
-    EntropySourceHardwareRNG | EntropySourceInterruptJitter,                     // IRQ+HW
-    EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage,  // Custom
+    EntropySourceBatteryVoltage | EntropySourceTemperature | EntropySourceADC,   // Env Only
 };
 
 void flipper_rng_source_changed(VariableItem* item) {
@@ -55,7 +49,7 @@ void flipper_rng_source_changed(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     
     switch(index) {
-    case 0: // All sources
+    case 0: // All high-quality sources
         app->state->entropy_sources = EntropySourceAll;
         break;
     case 1: // HW RNG only
@@ -64,23 +58,14 @@ void flipper_rng_source_changed(VariableItem* item) {
     case 2: // ADC + HW RNG
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceADC;
         break;
-    case 3: // Timing based
-        app->state->entropy_sources = EntropySourceTiming | EntropySourceCPUJitter | EntropySourceButtonTiming;
-        break;
-    case 4: // RF + HW RNG
+    case 3: // RF + HW RNG
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceSubGhzRSSI;
         break;
-    case 5: // EM + HW RNG (Electromagnetic + Hardware)
-        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceNFCField;
-        break;
-    case 6: // IR + HW RNG (Infrared + Hardware)
+    case 4: // IR + HW RNG
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceInfraredNoise;
         break;
-    case 7: // IRQ + HW RNG (Interrupt + Hardware)
-        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceInterruptJitter;
-        break;
-    case 8: // Custom mix
-        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceTiming | EntropySourceBatteryVoltage;
+    case 5: // Environmental only (no HW RNG)
+        app->state->entropy_sources = EntropySourceBatteryVoltage | EntropySourceTemperature | EntropySourceADC;
         break;
     }
     

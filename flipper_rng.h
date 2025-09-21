@@ -15,20 +15,15 @@
 #define RNG_POOL_SIZE 4096
 #define RNG_OUTPUT_CHUNK_SIZE 64
 
-// Entropy source flags
+// Entropy source flags - Focused on high-quality, predictable sources
 typedef enum {
-    EntropySourceHardwareRNG = (1 << 0),
-    EntropySourceADC = (1 << 1),
-    EntropySourceTiming = (1 << 2),
-    EntropySourceButtonTiming = (1 << 3),
-    EntropySourceCPUJitter = (1 << 4),
-    EntropySourceBatteryVoltage = (1 << 5),
-    EntropySourceTemperature = (1 << 6),
-    EntropySourceSubGhzRSSI = (1 << 7),
-    EntropySourceNFCField = (1 << 8),
-    EntropySourceInfraredNoise = (1 << 9),
-    EntropySourceInterruptJitter = (1 << 10),
-    EntropySourceAll = 0x7FF,
+    EntropySourceHardwareRNG = (1 << 0),        // STM32WB55 TRNG - always excellent
+    EntropySourceADC = (1 << 1),                // Multi-channel differential analog noise
+    EntropySourceBatteryVoltage = (1 << 2),     // Power supply environmental variations
+    EntropySourceTemperature = (1 << 3),        // Thermal environmental variations
+    EntropySourceSubGhzRSSI = (1 << 4),         // RF atmospheric noise (safe mode)
+    EntropySourceInfraredNoise = (1 << 5),      // IR ambient environmental noise
+    EntropySourceAll = 0x3F,
 } EntropySource;
 
 // Output mode
@@ -83,15 +78,10 @@ typedef struct {
     // Per-source bit counters (track bits collected from each source)
     uint32_t bits_from_hw_rng;
     uint32_t bits_from_adc;
-    uint32_t bits_from_timing;
-    uint32_t bits_from_cpu_jitter;
     uint32_t bits_from_battery;
     uint32_t bits_from_temperature;
-    uint32_t bits_from_button;
     uint32_t bits_from_subghz_rssi;
-    uint32_t bits_from_nfc_field;
     uint32_t bits_from_infrared;
-    uint32_t bits_from_interrupt_jitter;
 } FlipperRngState;
 
 // Forward declaration
@@ -120,17 +110,13 @@ typedef struct {
 FlipperRngApp* flipper_rng_app_alloc(void);
 void flipper_rng_app_free(FlipperRngApp* app);
 
-// Entropy collection functions
+// Entropy collection functions - High-quality, environment-independent sources
 void flipper_rng_collect_hardware_rng(FlipperRngState* state);
 void flipper_rng_collect_adc_entropy(FlipperRngState* state);
-void flipper_rng_collect_timing_entropy(FlipperRngState* state);
-void flipper_rng_collect_cpu_jitter(FlipperRngState* state);
 void flipper_rng_collect_battery_entropy(FlipperRngState* state);
 void flipper_rng_collect_temperature_entropy(FlipperRngState* state);
 void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state);
-void flipper_rng_collect_nfc_field_entropy(FlipperRngState* state);
 void flipper_rng_collect_infrared_entropy(FlipperRngState* state);
-void flipper_rng_collect_interrupt_jitter_entropy(FlipperRngState* state);
 
 // Entropy mixing and output
 void flipper_rng_mix_pool(FlipperRngState* state);

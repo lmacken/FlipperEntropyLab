@@ -197,15 +197,10 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         app->state->samples_collected = 0;
         app->state->bits_from_hw_rng = 0;
         app->state->bits_from_adc = 0;
-        app->state->bits_from_timing = 0;
-        app->state->bits_from_cpu_jitter = 0;
         app->state->bits_from_battery = 0;
         app->state->bits_from_temperature = 0;
-        app->state->bits_from_button = 0;
         app->state->bits_from_subghz_rssi = 0;
-        app->state->bits_from_nfc_field = 0;
         app->state->bits_from_infrared = 0;
-        app->state->bits_from_interrupt_jitter = 0;
         memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
         
         // Start the worker thread
@@ -279,18 +274,13 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         {
             furi_string_reset(app->text_box_store);
             
-            // Calculate total entropy bits
+            // Calculate total entropy bits - High-quality sources only
             uint32_t total_bits = app->state->bits_from_hw_rng + 
                                   app->state->bits_from_adc + 
-                                  app->state->bits_from_timing + 
-                                  app->state->bits_from_cpu_jitter + 
                                   app->state->bits_from_battery + 
                                   app->state->bits_from_temperature + 
-                                  app->state->bits_from_button + 
                                   app->state->bits_from_subghz_rssi + 
-                                  app->state->bits_from_nfc_field + 
-                                  app->state->bits_from_infrared + 
-                                  app->state->bits_from_interrupt_jitter;
+                                  app->state->bits_from_infrared;
             
             // Build the statistics display
             furi_string_printf(
@@ -303,7 +293,7 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
                 (int)app->state->entropy_rate
             );
             
-            // Show each source with bits collected
+            // Show each high-quality source with bits collected
             if(app->state->entropy_sources & EntropySourceHardwareRNG) {
                 furi_string_cat_printf(app->text_box_store, 
                     "HW RNG: %lu bits\n", app->state->bits_from_hw_rng);
@@ -311,14 +301,6 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             if(app->state->entropy_sources & EntropySourceADC) {
                 furi_string_cat_printf(app->text_box_store, 
                     "ADC: %lu bits\n", app->state->bits_from_adc);
-            }
-            if(app->state->entropy_sources & EntropySourceTiming) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "Timing: %lu bits\n", app->state->bits_from_timing);
-            }
-            if(app->state->entropy_sources & EntropySourceCPUJitter) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "CPU: %lu bits\n", app->state->bits_from_cpu_jitter);
             }
             if(app->state->entropy_sources & EntropySourceBatteryVoltage) {
                 furi_string_cat_printf(app->text_box_store, 
@@ -332,17 +314,9 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
                 furi_string_cat_printf(app->text_box_store, 
                     "SubGHz: %lu bits\n", app->state->bits_from_subghz_rssi);
             }
-            if(app->state->entropy_sources & EntropySourceNFCField) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "NFC: %lu bits\n", app->state->bits_from_nfc_field);
-            }
             if(app->state->entropy_sources & EntropySourceInfraredNoise) {
                 furi_string_cat_printf(app->text_box_store, 
                     "IR: %lu bits\n", app->state->bits_from_infrared);
-            }
-            if(app->state->entropy_sources & EntropySourceInterruptJitter) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "IRQ: %lu bits\n", app->state->bits_from_interrupt_jitter);
             }
             
             furi_string_cat_printf(app->text_box_store, 
@@ -426,11 +400,10 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->samples_collected = 0;
     app->state->bits_from_hw_rng = 0;
     app->state->bits_from_adc = 0;
-    app->state->bits_from_timing = 0;
-    app->state->bits_from_cpu_jitter = 0;
     app->state->bits_from_battery = 0;
     app->state->bits_from_temperature = 0;
-    app->state->bits_from_button = 0;
+    app->state->bits_from_subghz_rssi = 0;
+    app->state->bits_from_infrared = 0;
     memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
     app->state->entropy_rate = 0.0f;
     app->state->adc_handle = NULL;

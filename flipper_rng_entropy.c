@@ -90,34 +90,6 @@ uint32_t flipper_rng_get_adc_noise(FuriHalAdcHandle* handle) {
     return entropy;
 }
 
-// Get timing jitter from high-resolution timer
-uint32_t flipper_rng_get_timing_jitter(void) {
-    static uint32_t last_time = 0;
-    uint32_t current_time = DWT->CYCCNT;
-    uint32_t jitter = current_time - last_time;
-    last_time = current_time;
-    
-    // Mix with microsecond counter
-    jitter ^= (furi_get_tick() << 16);
-    jitter ^= (DWT->CYCCNT & 0xFFFF);
-    
-    return jitter;
-}
-
-// Get CPU execution jitter
-uint32_t flipper_rng_get_cpu_jitter(void) {
-    uint32_t start = DWT->CYCCNT;
-    
-    // Perform some operations that have variable timing
-    volatile uint32_t dummy = 0;
-    for(volatile int i = 0; i < 100; i++) {
-        dummy += i * i;
-        dummy ^= (dummy >> 3);
-    }
-    
-    uint32_t end = DWT->CYCCNT;
-    return (end - start) ^ dummy;
-}
 
 // Get battery voltage noise
 uint32_t flipper_rng_get_battery_noise(void) {
@@ -270,19 +242,6 @@ void flipper_rng_collect_adc_entropy(FlipperRngState* state) {
     }
 }
 
-void flipper_rng_collect_timing_entropy(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceTiming) {
-        uint32_t timing_jitter = flipper_rng_get_timing_jitter();
-        flipper_rng_add_entropy(state, timing_jitter, 8); // Timing has moderate entropy
-    }
-}
-
-void flipper_rng_collect_cpu_jitter(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceCPUJitter) {
-        uint32_t cpu_jitter = flipper_rng_get_cpu_jitter();
-        flipper_rng_add_entropy(state, cpu_jitter, 4); // CPU jitter has low entropy
-    }
-}
 
 void flipper_rng_collect_battery_entropy(FlipperRngState* state) {
     if(state->entropy_sources & EntropySourceBatteryVoltage) {
@@ -361,48 +320,6 @@ void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state) {
     }
 }
 
-// Get NFC field variation noise - Safe implementation with fallback
-uint32_t flipper_rng_get_nfc_field_noise(void) {
-    uint32_t entropy = 0;
-    
-    FURI_LOG_I(TAG, "NFC Field: Starting safe field variation collection");
-    
-    // For now, implement a safe version that doesn't access NFC hardware directly
-    // This avoids crashes while still providing electromagnetic-related entropy
-    
-    // Use enhanced timing variations that would be influenced by EM environment
-    for(int i = 0; i < 32; i++) {
-        uint32_t timing_start = DWT->CYCCNT;
-        
-        // Perform operations that could be influenced by EM environment
-        // These timing variations can be affected by electromagnetic fields
-        volatile uint32_t dummy = 0;
-        for(volatile int j = 0; j < 10; j++) {
-            dummy += j * timing_start;
-            dummy ^= (dummy >> 3);
-        }
-        
-        uint32_t timing_end = DWT->CYCCNT;
-        uint32_t timing_delta = timing_end - timing_start;
-        
-        // Mix timing variations with electromagnetic-sensitive operations
-        uint8_t noise_bit = (timing_delta ^ dummy ^ DWT->CYCCNT) & 1;
-        entropy = (entropy << 1) | noise_bit;
-        
-        // Variable delays that could be EM-sensitive
-        furi_delay_us(50 + (i % 50));
-    }
-    
-    FURI_LOG_I(TAG, "NFC Field: Collected EM-influenced entropy=0x%08lX (safe mode)", entropy);
-    return entropy;
-}
-
-void flipper_rng_collect_nfc_field_entropy(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceNFCField) {
-        uint32_t nfc_noise = flipper_rng_get_nfc_field_noise();
-        flipper_rng_add_entropy(state, nfc_noise, 6); // Medium quality electromagnetic field noise
-    }
-}
 
 // Get infrared ambient noise from IR sensor
 uint32_t flipper_rng_get_infrared_noise(void) {
@@ -462,58 +379,4 @@ void flipper_rng_collect_infrared_entropy(FlipperRngState* state) {
     }
 }
 
-// Get interrupt timing jitter from system interrupt activity
-uint32_t flipper_rng_get_interrupt_jitter_noise(void) {
-    uint32_t entropy = 0;
-    static uint32_t last_isr_time = 0;
-    
-    FURI_LOG_I(TAG, "Interrupt: Starting system interrupt jitter collection");
-    
-    // Sample interrupt timing variations using multiple methods
-    for(int i = 0; i < 8; i++) {
-        uint32_t timing_start = DWT->CYCCNT;
-        
-        // Get total time spent in ISRs (from interrupt accounting system)
-        uint32_t current_isr_time = furi_hal_interrupt_get_time_in_isr_total();
-        uint32_t isr_delta = current_isr_time - last_isr_time;
-        last_isr_time = current_isr_time;
-        
-        // Sample NVIC interrupt activity registers
-        uint32_t nvic_active = NVIC->IABR[0] ^ NVIC->IABR[1]; // Active interrupt bits
-        uint32_t nvic_pending = NVIC->ISPR[0] ^ NVIC->ISPR[1]; // Pending interrupt bits
-        
-        // Get system control block interrupt status
-        uint32_t scb_icsr = SCB->ICSR; // Interrupt Control and State Register
-        uint8_t active_vector = scb_icsr & 0xFF; // Currently active vector number
-        
-        uint32_t timing_end = DWT->CYCCNT;
-        uint32_t sampling_time = timing_end - timing_start;
-        
-        // Mix multiple interrupt timing sources
-        uint32_t interrupt_mix = isr_delta ^ nvic_active ^ nvic_pending ^ 
-                                (scb_icsr >> 8) ^ active_vector ^ sampling_time;
-        
-        // Extract entropy from interrupt timing variations
-        uint8_t jitter_byte = (interrupt_mix ^ (interrupt_mix >> 8) ^ 
-                              (interrupt_mix >> 16) ^ (interrupt_mix >> 24)) & 0xFF;
-        
-        entropy = (entropy << 8) | jitter_byte;
-        
-        FURI_LOG_I(TAG, "Interrupt: Sample %d, ISR_delta=%lu, NVIC=0x%08lX, ICSR=0x%08lX, byte=0x%02X", 
-                  i, isr_delta, nvic_active, scb_icsr, jitter_byte);
-        
-        // Small delay to allow interrupt activity changes
-        furi_delay_us(250);
-    }
-    
-    FURI_LOG_I(TAG, "Interrupt: Collected interrupt jitter entropy=0x%08lX", entropy);
-    return entropy;
-}
-
-void flipper_rng_collect_interrupt_jitter_entropy(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceInterruptJitter) {
-        uint32_t interrupt_noise = flipper_rng_get_interrupt_jitter_noise();
-        flipper_rng_add_entropy(state, interrupt_noise, 12); // High quality interrupt timing jitter
-    }
-}
 

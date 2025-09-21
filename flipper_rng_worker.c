@@ -73,21 +73,6 @@ int32_t flipper_rng_worker_thread(void* context) {
             }
         }
         
-        // Timing jitter - low-medium quality
-        if(app->state->entropy_sources & EntropySourceTiming) {
-            uint32_t timing = flipper_rng_get_timing_jitter();
-            flipper_rng_add_entropy(app->state, timing, 4);
-            entropy_bits += 4;
-            app->state->bits_from_timing += 4;
-        }
-        
-        // CPU jitter - low quality but unique
-        if(app->state->entropy_sources & EntropySourceCPUJitter) {
-            uint32_t cpu_jitter = flipper_rng_get_cpu_jitter();
-            flipper_rng_add_entropy(app->state, cpu_jitter, 2);
-            entropy_bits += 2;
-            app->state->bits_from_cpu_jitter += 2;
-        }
         
         // Battery voltage - very low quality, slow changing
         if((app->state->entropy_sources & EntropySourceBatteryVoltage) && (counter % 100 == 0)) {
@@ -113,28 +98,12 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_subghz_rssi += 10;
         }
         
-        // NFC Field - medium quality, electromagnetic field variations
-        if((app->state->entropy_sources & EntropySourceNFCField) && (counter % 20 == 0)) {
-            uint32_t nfc_noise = flipper_rng_get_nfc_field_noise();
-            flipper_rng_add_entropy(app->state, nfc_noise, 6);
-            entropy_bits += 6;
-            app->state->bits_from_nfc_field += 6;
-        }
-        
         // Infrared - good quality, ambient IR noise and timing variations
         if((app->state->entropy_sources & EntropySourceInfraredNoise) && (counter % 25 == 0)) {
             uint32_t ir_noise = flipper_rng_get_infrared_noise();
             flipper_rng_add_entropy(app->state, ir_noise, 8);
             entropy_bits += 8;
             app->state->bits_from_infrared += 8;
-        }
-        
-        // Interrupt Jitter - high quality, system-level timing variations
-        if((app->state->entropy_sources & EntropySourceInterruptJitter) && (counter % 15 == 0)) {
-            uint32_t interrupt_noise = flipper_rng_get_interrupt_jitter_noise();
-            flipper_rng_add_entropy(app->state, interrupt_noise, 12);
-            entropy_bits += 12;
-            app->state->bits_from_interrupt_jitter += 12;
         }
         
         // Mix the entropy pool periodically

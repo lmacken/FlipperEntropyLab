@@ -6,7 +6,6 @@
 #include <furi_hal_power.h>
 #include <furi_hal_cortex.h>
 #include <furi_hal_infrared.h>
-#include <furi_hal_interrupt.h>
 #include <infrared_worker.h>
 
 // Entropy mixing constants (based on LFSR)
@@ -32,17 +31,13 @@ typedef struct {
 void flipper_rng_init_entropy_sources(FlipperRngState* state);
 void flipper_rng_deinit_entropy_sources(FlipperRngState* state);
 
-// Individual entropy collectors
+// Individual entropy collectors - High-quality, environment-independent sources
 uint32_t flipper_rng_get_hardware_random(void);
 uint32_t flipper_rng_get_adc_noise(FuriHalAdcHandle* handle);
-uint32_t flipper_rng_get_timing_jitter(void);
-uint32_t flipper_rng_get_cpu_jitter(void);
 uint32_t flipper_rng_get_battery_noise(void);
 uint32_t flipper_rng_get_temperature_noise(void);
 uint32_t flipper_rng_get_subghz_rssi_noise(void);
-uint32_t flipper_rng_get_nfc_field_noise(void);
 uint32_t flipper_rng_get_infrared_noise(void);
-uint32_t flipper_rng_get_interrupt_jitter_noise(void);
 
 // Entropy processing
 void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t bits);
