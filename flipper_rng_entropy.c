@@ -239,57 +239,52 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     
     FURI_LOG_I(TAG, "SubGHz RSSI: Starting enhanced hardware RSSI collection");
     
-    // Extended frequency set for maximum entropy coverage
-    // Covering all major ISM bands and allowed frequencies
+    // Optimized frequency set based on regional validation
+    // Focus on frequencies that work globally without blocks
     uint32_t frequencies[] = {
-        // 300-348 MHz band (CC1101 supported, good atmospheric noise)
-        300000000,  // 300 MHz - Band edge, high noise
-        310000000,  // 310 MHz - Between common bands
-        315000000,  // 315 MHz - ISM band (US garage doors, car remotes)
-        318000000,  // 318 MHz - UK SRD band
-        330000000,  // 330 MHz - Military/aviation nearby
+        // 300-348 MHz band (most regions allow these)
+        300000000,  // 300 MHz - Band edge
+        310000000,  // 310 MHz 
+        315000000,  // 315 MHz - ISM band (US/Asia)
+        318000000,  // 318 MHz - UK SRD
+        330000000,  // 330 MHz
         345000000,  // 345 MHz - Near band edge
         
-        // 387-464 MHz band (CC1101 supported)
-        390000000,  // 390 MHz - Near public safety bands
-        410000000,  // 410 MHz - Amateur radio nearby
-        418000000,  // 418 MHz - TETRA emergency services nearby
+        // 387-464 MHz band (check region)
+        390000000,  // 390 MHz
+        410000000,  // 410 MHz
+        418000000,  // 418 MHz
         
         // 433 MHz region - most universally accepted
-        433050000,  // 433.05 MHz - LPD433 band start
-        433175000,  // 433.175 MHz - LPD433 mid-band
-        433300000,  // 433.3 MHz - LPD433 channel
-        433420000,  // 433.42 MHz - Amateur radio  
-        433620000,  // 433.62 MHz - Between channels
-        433920000,  // 433.92 MHz - ISM band center (Global)
-        434420000,  // 434.42 MHz - SRD band
-        434790000,  // 434.79 MHz - LPD433 band end
+        433050000,  // 433.05 MHz - LPD433 start
+        433175000,  // 433.175 MHz - LPD433
+        433300000,  // 433.3 MHz - LPD433
+        433420000,  // 433.42 MHz - Amateur
+        433620000,  // 433.62 MHz
+        433920000,  // 433.92 MHz - ISM Global
+        434420000,  // 434.42 MHz - SRD
+        434790000,  // 434.79 MHz - LPD433 end
         
-        // 440-450 MHz (additional coverage)
-        440000000,  // 440 MHz - Amateur radio band edge
-        446000000,  // 446 MHz - PMR446 (EU walkie-talkies)
-        450000000,  // 450 MHz - Commercial mobile radio
+        // 440-450 MHz (region dependent)
+        440000000,  // 440 MHz
+        446000000,  // 446 MHz - PMR446
+        450000000,  // 450 MHz
         
-        // 460-464 MHz (upper CC1101 range)
-        460000000,  // 460 MHz - Public safety adjacent
-        462562500,  // 462.5625 MHz - FRS/GMRS channel 1
+        // 460-464 MHz (often blocked)
+        460000000,  // 460 MHz
+        462562500,  // 462.5625 MHz - FRS/GMRS
         464000000,  // 464 MHz - Band edge
         
-        // 779-928 MHz band (CC1101 supported)
-        784000000,  // 784 MHz - Public safety band nearby
-        
-        // 902-928 MHz ISM band (Americas/Australia)
-        902000000,  // 902 MHz - ISM band start
-        903000000,  // 903 MHz 
+        // 902-928 MHz ISM (Americas/AU only)
+        902000000,  // 902 MHz
         905000000,  // 905 MHz
         910000000,  // 910 MHz
-        915000000,  // 915 MHz - ISM band center
+        915000000,  // 915 MHz - ISM center
         920000000,  // 920 MHz
         925000000,  // 925 MHz
-        928000000,  // 928 MHz - ISM band end
         
-        // Note: 868 MHz removed due to regional restrictions
-        // Note: 2.4 GHz not supported by CC1101
+        // Note: Removed 784, 903, 928 MHz as they often fail
+        // Note: 868 MHz removed - EU only
     };
     
     // Try to prepare SubGHz for RX
@@ -328,15 +323,16 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     
     // Pre-filter frequencies to only valid ones for this region
     // This avoids "frequency blocked" errors
-    uint32_t valid_frequencies[10];
+    uint32_t valid_frequencies[30];  // Increased to handle more frequencies
     size_t valid_count = 0;
     
-    for(size_t i = 0; i < num_freqs && valid_count < 10; i++) {
+    for(size_t i = 0; i < num_freqs && valid_count < 30; i++) {  // Increased limit to 30
         if(furi_hal_subghz_is_frequency_valid(frequencies[i])) {
             valid_frequencies[valid_count++] = frequencies[i];
-            FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz is valid", frequencies[i]/1000000);
-        } else {
-            FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz blocked, skipping", frequencies[i]/1000000);
+            // Only log debug info for first few frequencies to reduce spam
+            if(valid_count <= 3) {
+                FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz is valid", frequencies[i]/1000000);
+            }
         }
     }
     
@@ -365,22 +361,44 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     FURI_LOG_D(TAG, "SubGHz RSSI: Sampling %u frequencies from %zu valid", 
               samples_to_take, valid_count);
     
-    // Non-consecutive frequency hopping pattern (inspired by spectrum analyzer)
-    // This reduces interference between adjacent frequencies
-    uint8_t hop_pattern[] = {0, 3, 1, 4, 2, 5, 7, 6, 9, 8, 11, 10};
-    
+    // Non-consecutive frequency hopping pattern
+    // Adaptive pattern based on number of valid frequencies
     for(int i = 0; i < samples_to_take && byte_idx < 4; i++) {
-        // Use hopping pattern with random offset for unpredictability
-        uint8_t pattern_idx = hop_pattern[i % 12];
-        uint8_t freq_idx = (freq_offset + pattern_idx) % valid_count;
+        // Simple non-consecutive hopping: alternate between lower and upper half
+        // then move inward for better coverage
+        uint8_t freq_idx;
+        if(valid_count > 1) {
+            // Alternate between different parts of the frequency list
+            if(i % 2 == 0) {
+                // Even: start from beginning
+                freq_idx = (freq_offset + i/2) % valid_count;
+            } else {
+                // Odd: start from middle
+                freq_idx = (freq_offset + valid_count/2 + i/2) % valid_count;
+            }
+        } else {
+            freq_idx = 0;  // Only one frequency available
+        }
+        
         uint32_t frequency = valid_frequencies[freq_idx];
         
         uint8_t noise_byte = 0;
         uint32_t timing_start = DWT->CYCCNT;
         
-        // Try to use real RSSI if SubGHz is available (frequency already validated)
+        // Try to use real RSSI if SubGHz is available
         if(subghz_available) {
-            // Configure and start RX (use set_frequency since we pre-validated)
+            // Double-check frequency validity before setting
+            // This avoids "frequency blocked" errors
+            if(!furi_hal_subghz_is_frequency_valid(frequency)) {
+                FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz blocked at runtime, using timing", 
+                          frequency/1000000);
+                uint32_t timing_end = DWT->CYCCNT;
+                noise_byte = (timing_end - timing_start) & 0xFF;
+                entropy_bytes[byte_idx++] = noise_byte;
+                continue;
+            }
+            
+            // Configure and start RX
             uint32_t actual_freq = furi_hal_subghz_set_frequency(frequency);
             
             if(actual_freq > 0) {
