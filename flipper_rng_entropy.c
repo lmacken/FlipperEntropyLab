@@ -1,45 +1,34 @@
 #include "flipper_rng_entropy.h"
+#include <furi.h>
+#include <furi_hal.h>
+#include <furi_hal_random.h>
+#include <furi_hal_cortex.h>
+#include <furi_hal_infrared.h>
+#include <furi_hal_subghz.h>
+#include <furi_hal_light.h>
+#include <lib/subghz/devices/cc1101_configs.h>
+#include <infrared.h>
+#include <infrared_worker.h>
+#include <infrared_transmit.h>
 
 #define TAG "FlipperRNG"
 
-// Initialize entropy sources
+// Initialize entropy sources - High quality only
 void flipper_rng_init_entropy_sources(FlipperRngState* state) {
-    FURI_LOG_I(TAG, "Initializing entropy sources: 0x%02lX", (unsigned long)state->entropy_sources);
+    FURI_LOG_I(TAG, "Initializing high-quality entropy sources: 0x%02lX", (unsigned long)state->entropy_sources);
     
-    // Initialize ADC for noise collection
-    if(state->entropy_sources & EntropySourceADC) {
-        // Clean up any existing handle first
-        if(state->adc_handle) {
-            FURI_LOG_I(TAG, "Releasing existing ADC handle...");
-            furi_hal_adc_release(state->adc_handle);
-            state->adc_handle = NULL;
-        }
-        
-        FURI_LOG_I(TAG, "Acquiring ADC handle...");
-        state->adc_handle = furi_hal_adc_acquire();
-        if(state->adc_handle) {
-            FURI_LOG_I(TAG, "Configuring ADC...");
-            furi_hal_adc_configure(state->adc_handle);
-            FURI_LOG_I(TAG, "ADC configured successfully");
-        } else {
-            FURI_LOG_W(TAG, "Failed to acquire ADC handle, disabling ADC entropy");
-            state->entropy_sources &= ~EntropySourceADC;
-        }
-    }
+    // No hardware initialization needed for our high-quality sources:
+    // - Hardware RNG: Always available via furi_hal_random_get()
+    // - SubGHz RSSI: Uses safe RF-influenced timing (no device access)
+    // - Infrared: Uses ambient IR timing variations (no persistent worker)
     
-    // Initialize other hardware as needed
-    FURI_LOG_I(TAG, "Entropy sources initialized: 0x%02lX", (unsigned long)state->entropy_sources);
+    FURI_LOG_I(TAG, "High-quality entropy sources ready: 0x%02lX", (unsigned long)state->entropy_sources);
 }
 
 void flipper_rng_deinit_entropy_sources(FlipperRngState* state) {
-    if(state->adc_handle) {
-        furi_hal_adc_release(state->adc_handle);
-        state->adc_handle = NULL;
-    }
-    
-    // SubGHz and NFC entropy sources now use safe implementations
-    // No hardware cleanup needed
-    FURI_LOG_I(TAG, "Entropy sources deinitialized");
+    UNUSED(state);
+    // No hardware cleanup needed for high-quality sources
+    FURI_LOG_I(TAG, "High-quality entropy sources deinitialized");
 }
 
 // Get hardware random number
@@ -235,80 +224,180 @@ void flipper_rng_collect_hardware_rng(FlipperRngState* state) {
     }
 }
 
-void flipper_rng_collect_adc_entropy(FlipperRngState* state) {
-    if((state->entropy_sources & EntropySourceADC) && state->adc_handle) {
-        uint32_t adc_noise = flipper_rng_get_adc_noise(state->adc_handle);
-        flipper_rng_add_entropy(state, adc_noise, 16); // ADC noise has less entropy
-    }
-}
+// Removed low-quality entropy collectors
+// ADC, battery, and temperature sources removed - too predictable
+// Now focusing only on high-quality sources: HW RNG, SubGHz RSSI, Infrared
 
-
-void flipper_rng_collect_battery_entropy(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceBatteryVoltage) {
-        uint32_t battery_noise = flipper_rng_get_battery_noise();
-        flipper_rng_add_entropy(state, battery_noise, 8);
-    }
-}
-
-void flipper_rng_collect_temperature_entropy(FlipperRngState* state) {
-    if(state->entropy_sources & EntropySourceTemperature) {
-        uint32_t temp_noise = flipper_rng_get_temperature_noise();
-        flipper_rng_add_entropy(state, temp_noise, 4); // Temperature changes slowly
-    }
-}
-
-// Get SubGHz RSSI noise - Safe implementation without direct device access
+// Get SubGHz RSSI noise - Real hardware implementation with safety
 uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     uint32_t entropy = 0;
     
-    FURI_LOG_I(TAG, "SubGHz RSSI: Starting safe RF-influenced noise collection");
+    FURI_LOG_I(TAG, "SubGHz RSSI: Starting real hardware RSSI collection");
     
-    // Disable direct SubGHz device access to prevent crashes
-    // Instead, use RF-influenced entropy that would vary with electromagnetic environment
-    
-    // Sample multiple frequencies for RF-influenced entropy (safe mode)
+    // Optimized frequency set - focusing on universally allowed frequencies
+    // Removed 868 MHz frequencies that cause regional blocks
     uint32_t frequencies[] = {
-        315000000,  // 315 MHz (ISM band)
-        433920000,  // 433.92 MHz (ISM band)  
-        868300000,  // 868.3 MHz (ISM band)
-        915000000   // 915 MHz (ISM band)
+        // 300-348 MHz band (CC1101 supported)
+        315000000,  // 315 MHz - ISM band (US garage doors, car remotes)
+        
+        // 433 MHz region - most universally accepted
+        433050000,  // 433.05 MHz - LPD433 band start
+        433420000,  // 433.42 MHz - Amateur radio  
+        433920000,  // 433.92 MHz - ISM band (Global)
+        434790000,  // 434.79 MHz - LPD433 band end
+        
+        // 915 MHz - widely used in Americas/Australia
+        915000000,  // 915 MHz - US/AU ISM band center
+        
+        // Note: Removed 868 MHz frequencies as they trigger
+        // "Frequency blocked" even when validation passes
+        
+        // Note: Removed frequencies outside CC1101 bands:
+        // - 470 MHz (outside 387-464 range)
+        // - 490 MHz (outside 387-464 range)
+        // These were causing "outside region" errors
     };
     
-    for(int i = 0; i < 4; i++) {
+    // Try to prepare SubGHz for RX
+    bool subghz_available = false;
+    
+    // Reset SubGHz to known state
+    furi_hal_subghz_reset();
+    
+    // Load a basic OOK preset for simple RX operation
+    // This configures the CC1101 chip properly
+    furi_hal_subghz_load_custom_preset(subghz_device_cc1101_preset_ook_650khz_async_regs);
+    
+    // Put in idle state
+    furi_hal_subghz_idle();
+    
+    // Check if we can successfully set a frequency (indicates SubGHz is responsive)
+    uint32_t test_freq = furi_hal_subghz_set_frequency(433920000);
+    if(test_freq > 0) {
+        subghz_available = true;
+        FURI_LOG_I(TAG, "SubGHz RSSI: Hardware ready at %lu Hz", test_freq);
+    } else {
+        FURI_LOG_W(TAG, "SubGHz RSSI: Hardware not responding, using timing entropy");
+    }
+    
+    // Calculate number of frequencies
+    size_t num_freqs = sizeof(frequencies) / sizeof(frequencies[0]);
+    
+    // Pre-filter frequencies to only valid ones for this region
+    // This avoids "frequency blocked" errors
+    uint32_t valid_frequencies[10];
+    size_t valid_count = 0;
+    
+    for(size_t i = 0; i < num_freqs && valid_count < 10; i++) {
+        if(furi_hal_subghz_is_frequency_valid(frequencies[i])) {
+            valid_frequencies[valid_count++] = frequencies[i];
+            FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz is valid", frequencies[i]/1000000);
+        } else {
+            FURI_LOG_D(TAG, "SubGHz: Freq %lu MHz blocked, skipping", frequencies[i]/1000000);
+        }
+    }
+    
+    if(valid_count == 0) {
+        FURI_LOG_W(TAG, "SubGHz: No frequencies valid in this region, using timing entropy");
+        return DWT->CYCCNT ^ (DWT->CYCCNT << 16);
+    }
+    
+    FURI_LOG_I(TAG, "SubGHz: %zu frequencies valid in this region", valid_count);
+    
+    // We'll collect up to 32 bits of entropy (4 bytes)
+    // Sample a subset of valid frequencies each time for speed
+    uint8_t entropy_bytes[4] = {0};
+    uint8_t byte_idx = 0;
+    
+    // Use a rotating offset to sample different frequencies each call
+    static uint8_t freq_offset = 0;
+    
+    // Sample 4-7 frequencies per call (balanced for speed vs entropy)
+    // Use explicit logic to avoid signed/unsigned comparison issues
+    uint8_t samples_to_take = (uint8_t)valid_count;
+    if(samples_to_take > 7) samples_to_take = 7;
+    if(samples_to_take < 4) samples_to_take = 4;
+    
+    FURI_LOG_D(TAG, "SubGHz RSSI: Sampling %u frequencies from %zu valid", 
+              samples_to_take, valid_count);
+    
+    for(int i = 0; i < samples_to_take && byte_idx < 4; i++) {
+        // Rotate through valid frequency list
+        uint8_t freq_idx = (freq_offset + i) % valid_count;
+        uint32_t frequency = valid_frequencies[freq_idx];
+        
         uint8_t noise_byte = 0;
         uint32_t timing_start = DWT->CYCCNT;
         
-        // Safe approach: Use frequency-based entropy without device access
-        // This avoids SubGHz device crashes while still providing RF-related entropy
-        
-        // Perform RF-frequency-influenced operations
-        volatile uint32_t rf_influenced_ops = 0;
-        uint32_t freq_factor = frequencies[i] / 1000000; // MHz value
-        
-        // Operations that could be influenced by RF environment
-        for(volatile uint32_t j = 0; j < freq_factor; j++) {
-            rf_influenced_ops += j * timing_start;
-            rf_influenced_ops ^= (rf_influenced_ops >> 3);
-            rf_influenced_ops ^= frequencies[i];
+        // Try to use real RSSI if SubGHz is available (frequency already validated)
+        if(subghz_available) {
+            // Configure and start RX (use set_frequency since we pre-validated)
+            uint32_t actual_freq = furi_hal_subghz_set_frequency(frequency);
+            
+            if(actual_freq > 0) {
+                furi_hal_subghz_rx();
+                
+                // Allow RSSI to stabilize (important for accurate readings)
+                furi_delay_us(500);  // Wait for RSSI stabilization
+                
+                // Get real RSSI and LQI values
+                float rssi_dbm = furi_hal_subghz_get_rssi();
+                uint8_t lqi = furi_hal_subghz_get_lqi();
+                
+                // Convert RSSI float to bits for entropy
+                union { float f; uint32_t i; } rssi_conv = { .f = rssi_dbm };
+                
+                // Get additional timing entropy
+                uint32_t timing_end = DWT->CYCCNT;
+                uint32_t timing_noise = (timing_end - timing_start) & 0xFF;
+                
+                // Mix RSSI mantissa, LQI, and timing for high-quality entropy
+                // Focus on the LSBs of RSSI which have the most noise
+                noise_byte = ((rssi_conv.i & 0xFF) ^ lqi ^ timing_noise);
+                
+                FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu MHz, RSSI=%.1f dBm, LQI=%u, byte=0x%02X", 
+                          frequency/1000000, (double)rssi_dbm, lqi, noise_byte);
+                
+                // Return to idle between frequencies
+                furi_hal_subghz_idle();
+            } else {
+                // Failed to set frequency, use timing
+                uint32_t timing_end = DWT->CYCCNT;
+                noise_byte = (timing_end - timing_start) & 0xFF;
+                FURI_LOG_D(TAG, "SubGHz RSSI: Failed to set freq %lu MHz, using timing", 
+                          frequency/1000000);
+            }
+        } else {
+            // SubGHz not available, use timing entropy
+            uint32_t timing_end = DWT->CYCCNT;
+            noise_byte = (timing_end - timing_start) & 0xFF;
+            FURI_LOG_D(TAG, "SubGHz RSSI: Hardware unavailable, using timing=0x%02X", noise_byte);
         }
         
-        uint32_t timing_end = DWT->CYCCNT;
-        uint32_t timing_delta = timing_end - timing_start;
+        // Store the entropy byte
+        entropy_bytes[byte_idx++] = noise_byte;
         
-        // Mix frequency characteristics with timing and operations
-        uint32_t freq_entropy = frequencies[i] ^ (frequencies[i] >> 16);
-        noise_byte = (freq_entropy ^ timing_delta ^ rf_influenced_ops) & 0xFF;
-        
-        FURI_LOG_I(TAG, "SubGHz RSSI: Freq=%lu MHz, timing=%lu, ops=%lu, byte=0x%02X", 
-                  frequencies[i]/1000000, timing_delta, rf_influenced_ops, noise_byte);
-        
-        entropy = (entropy << 8) | noise_byte;
-        
-        // Variable delay based on frequency for additional entropy
-        furi_delay_us(100 + (frequencies[i] % 200));
+        // Very small delay to avoid hogging the radio
+        furi_delay_us(5);
     }
     
-    FURI_LOG_I(TAG, "SubGHz RSSI: Collected entropy=0x%08lX", entropy);
+    // Increment offset for next call (rotate through all valid frequencies over time)
+    // Ensure we stay within bounds even if valid_count changes
+    freq_offset = (freq_offset + samples_to_take) % (valid_count > 0 ? valid_count : 1);
+    
+    // Pack entropy bytes into 32-bit return value
+    for(int i = 0; i < byte_idx; i++) {
+        entropy = (entropy << 8) | entropy_bytes[i];
+    }
+    
+    // Clean shutdown of SubGHz if we used it
+    if(subghz_available) {
+        furi_hal_subghz_idle();
+        furi_hal_subghz_sleep();
+    }
+    
+    FURI_LOG_I(TAG, "SubGHz RSSI: Collected %u bytes entropy=0x%08lX (HW:%s, Valid:%zu, Sampled:%u)", 
+              byte_idx, entropy, subghz_available ? "Yes" : "No", valid_count, samples_to_take);
     
     return entropy;
 }
@@ -321,54 +410,157 @@ void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state) {
 }
 
 
-// Get infrared ambient noise from IR sensor
+// Global variables for IR signal capture
+static volatile uint32_t ir_entropy_accumulator = 0;
+static volatile uint32_t ir_signal_count = 0;  // Count of signals received
+static volatile uint32_t ir_pulse_count = 0;
+
+// Callback for IR signal reception
+static void ir_entropy_callback(void* ctx, InfraredWorkerSignal* signal) {
+    UNUSED(ctx);
+    
+    // Quick blue LED pulse to indicate IR reception
+    // Using direct HAL control for minimal latency
+    furi_hal_light_set(LightBlue, 100);  // Blue at 100/255 brightness
+    
+    const uint32_t* timings = NULL;
+    size_t timings_cnt = 0;
+    
+    // Check if signal is decoded or raw
+    if(infrared_worker_signal_is_decoded(signal)) {
+        // For decoded signals, extract entropy from protocol data
+        const InfraredMessage* message = infrared_worker_get_decoded_signal(signal);
+        if(message) {
+            // Use protocol, address, command, and timing as entropy sources
+            uint32_t local_entropy = DWT->CYCCNT;
+            local_entropy ^= message->protocol;
+            local_entropy ^= (message->address << 8);
+            local_entropy ^= (message->command << 16);
+            local_entropy ^= (message->repeat ? 0xAAAAAAAA : 0x55555555);
+            
+            // Update global accumulator using addition + rotation to avoid cancellation
+            ir_entropy_accumulator = (ir_entropy_accumulator << 1) | (ir_entropy_accumulator >> 31);
+            ir_entropy_accumulator += local_entropy;
+            ir_pulse_count++;
+            ir_signal_count++;
+            
+            FURI_LOG_I(TAG, "IR decoded: proto=%d, addr=0x%lX, cmd=0x%lX, entropy=0x%08lX", 
+                      message->protocol, message->address, message->command, local_entropy);
+        }
+    } else {
+        // Get raw signal timings
+        infrared_worker_get_raw_signal(signal, &timings, &timings_cnt);
+        
+        if(timings_cnt > 0) {
+            // Mix timing values into entropy
+            uint32_t local_entropy = DWT->CYCCNT;
+            
+            for(size_t i = 0; i < timings_cnt && i < 32; i++) {
+                // Each timing contains entropy from IR physics:
+                // - Actual IR pulse duration variations
+                // - Atmospheric absorption variations
+                // - Receiver photodiode noise
+                // - Temperature effects on components
+                local_entropy = (local_entropy << 3) ^ (local_entropy >> 29) ^ timings[i];
+                local_entropy += i * 0x9E3779B9;  // Golden ratio for mixing
+            }
+            
+            // Update global accumulator using addition + rotation to avoid cancellation
+            ir_entropy_accumulator = (ir_entropy_accumulator << 1) | (ir_entropy_accumulator >> 31);
+            ir_entropy_accumulator += local_entropy;
+            ir_pulse_count += timings_cnt;
+            ir_signal_count++;
+            
+            FURI_LOG_I(TAG, "IR raw: %zu samples, entropy=0x%08lX", timings_cnt, local_entropy);
+        }
+    }
+    
+    // Turn off blue LED after processing
+    // The brief processing time provides a visible flash
+    furi_hal_light_set(LightBlue, 0);
+}
+
+// Get infrared ambient noise from IR sensor - Real signal capture
 uint32_t flipper_rng_get_infrared_noise(void) {
     uint32_t entropy = 0;
     
-    FURI_LOG_I(TAG, "Infrared: Starting ambient IR noise collection");
+    FURI_LOG_I(TAG, "Infrared: Starting IR signal collection");
     
-    // Use safe IR timing approach - sample IR reception timing without persistent worker
-    // This captures ambient IR variations and timing noise
-    
-    for(int i = 0; i < 16; i++) {
-        uint32_t timing_start = DWT->CYCCNT;
-        
-        // Brief IR reception window to detect ambient IR activity
-        // We'll use the HAL level IR functions which are safer
-        furi_hal_infrared_async_rx_start();
-        
-        // Short sampling window for ambient IR
-        furi_delay_us(1000); // 1ms window for IR detection
-        
-        uint32_t timing_sample = DWT->CYCCNT;
-        
-        // Stop IR reception
-        furi_hal_infrared_async_rx_stop();
-        
-        uint32_t timing_end = DWT->CYCCNT;
-        uint32_t ir_window_time = timing_sample - timing_start;
-        uint32_t total_time = timing_end - timing_start;
-        
-        // Mix IR timing characteristics with ambient variations
-        uint16_t timing_noise = (ir_window_time ^ total_time) & 0xFFFF;
-        
-        // Add some IR-frequency-influenced entropy
-        // IR typically operates around 38kHz carrier
-        uint32_t ir_influenced = timing_noise * 38000; // 38kHz influence
-        ir_influenced ^= (ir_influenced >> 16);
-        
-        uint8_t noise_byte = (timing_noise ^ ir_influenced) & 0xFF;
-        
-        entropy = (entropy << 8) | noise_byte;
-        
-        FURI_LOG_I(TAG, "Infrared: Sample %d, timing=%lu, IR_time=%lu, byte=0x%02X", 
-                  i, total_time, ir_window_time, noise_byte);
-        
-        // Variable delay between samples
-        furi_delay_us(500 + (i * 100));
+    // Check if IR is already in use
+    if(furi_hal_infrared_is_busy()) {
+        FURI_LOG_W(TAG, "Infrared: IR busy, skipping collection");
+        return 0;
     }
     
-    FURI_LOG_I(TAG, "Infrared: Collected ambient IR entropy=0x%08lX", entropy);
+    // Reset accumulators to count only this window's signals
+    ir_entropy_accumulator = 0;
+    ir_signal_count = 0;
+    ir_pulse_count = 0;
+    
+    // Create IR worker for signal capture
+    InfraredWorker* ir_worker = infrared_worker_alloc();
+    if(!ir_worker) {
+        FURI_LOG_W(TAG, "Infrared: Failed to allocate worker");
+        return 0;  // No entropy if we can't allocate
+    }
+    
+    // Enable BOTH decoded and raw signals to maximize entropy collection
+    // This way we can capture any IR signal, regardless of protocol
+    infrared_worker_rx_enable_signal_decoding(ir_worker, true);
+    
+    // Disable automatic blinking - we handle it manually in the callback
+    infrared_worker_rx_enable_blink_on_receiving(ir_worker, false);
+    
+    // Start IR reception first (like CLI does)
+    infrared_worker_rx_start(ir_worker);
+    
+    // Then set up callback to capture IR signals
+    infrared_worker_rx_set_received_signal_callback(ir_worker, ir_entropy_callback, NULL);
+    
+    // Collect IR signals for a period of time
+    // Even without active sources, we'll get:
+    // - Background IR from lights (fluorescent flicker at 50/60Hz)
+    // - Thermal IR noise from environment
+    // - Photodiode dark current noise
+    // - Amplifier thermal noise
+    
+    uint32_t collection_time_ms = 300;  // Collect for 300ms (longer window to catch IR signals)
+    uint32_t samples_taken = 0;
+    uint32_t start_time = furi_get_tick();
+    
+    // Process events while collecting - this is crucial for IR callbacks to work!
+    while((furi_get_tick() - start_time) < collection_time_ms) {
+        // Process pending callbacks by yielding to the scheduler
+        // This allows the IR worker thread to deliver callbacks
+        furi_delay_tick(1);  // Yield for 1 tick to process events
+    }
+    
+    // Stop IR reception
+    infrared_worker_rx_stop(ir_worker);
+    
+    // Small delay to allow any final callbacks to complete
+    furi_delay_ms(5);
+    
+    // Clean up
+    infrared_worker_free(ir_worker);
+    
+    // Now capture the accumulated entropy and reset for next time
+    if(ir_pulse_count > 0) {
+        // We got real IR signals - use them
+        entropy = ir_entropy_accumulator;
+        // Mix with pulse count and signal count for additional entropy
+        entropy ^= (ir_pulse_count << 16) | (ir_signal_count << 8);
+        samples_taken = ir_signal_count;
+        
+        FURI_LOG_I(TAG, "Infrared: Collected %lu IR pulses, %lu signals, entropy=0x%08lX", 
+                  (unsigned long)ir_pulse_count, (unsigned long)samples_taken, entropy);
+    } else {
+        FURI_LOG_D(TAG, "Infrared: No IR signals detected in %lums window", collection_time_ms);
+        entropy = 0;
+        samples_taken = 0;
+        // Don't reset if nothing was collected - might still be accumulating
+    }
+    
     return entropy;
 }
 

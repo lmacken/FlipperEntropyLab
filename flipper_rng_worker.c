@@ -3,7 +3,6 @@
 #include "flipper_rng_views.h"
 #include <furi_hal_random.h>
 #include <furi_hal_serial.h>
-#include <furi_hal_usb_cdc.h>
 #include <storage/storage.h>
 #include <toolbox/stream/file_stream.h>
 #include <math.h>
@@ -19,6 +18,7 @@ int32_t flipper_rng_worker_thread(void* context) {
     FURI_LOG_I(TAG, "Worker thread started - V4: Multi-source entropy with always-on visualization");
     FURI_LOG_I(TAG, "Output mode: %d (0=USB, 1=UART, 2=File) - Visualization always available", app->state->output_mode);
     FURI_LOG_I(TAG, "Entropy sources: 0x%02lX", app->state->entropy_sources);
+    
     
     // Initialize entropy sources
     flipper_rng_init_entropy_sources(app->state);
@@ -52,10 +52,10 @@ int32_t flipper_rng_worker_thread(void* context) {
             }
         }
         
-        // Collect entropy from enabled sources
+        // Collect entropy from HIGH-QUALITY sources only
         uint32_t entropy_bits = 0;
         
-        // Hardware RNG - highest quality
+        // Hardware RNG - HIGHEST QUALITY (32 bits per sample)
         if(app->state->entropy_sources & EntropySourceHardwareRNG) {
             uint32_t hw_random = furi_hal_random_get();
             flipper_rng_add_entropy(app->state, hw_random, 32);
@@ -63,48 +63,18 @@ int32_t flipper_rng_worker_thread(void* context) {
             app->state->bits_from_hw_rng += 32;
         }
         
-        // ADC noise - enhanced multi-channel differential (medium-high quality)
-        if(app->state->entropy_sources & EntropySourceADC) {
-            if(app->state->adc_handle) {
-                uint32_t adc_noise = flipper_rng_get_adc_noise(app->state->adc_handle);
-                flipper_rng_add_entropy(app->state, adc_noise, 12); // Enhanced from 8 to 12 bits
-                entropy_bits += 12;
-                app->state->bits_from_adc += 12;
-            }
-        }
-        
-        
-        // Battery voltage - very low quality, slow changing
-        if((app->state->entropy_sources & EntropySourceBatteryVoltage) && (counter % 100 == 0)) {
-            uint32_t battery = flipper_rng_get_battery_noise();
-            flipper_rng_add_entropy(app->state, battery, 2);
-            entropy_bits += 2;
-            app->state->bits_from_battery += 2;
-        }
-        
-        // Temperature - very low quality, very slow changing
-        if((app->state->entropy_sources & EntropySourceTemperature) && (counter % 500 == 0)) {
-            uint32_t temp = flipper_rng_get_temperature_noise();
-            flipper_rng_add_entropy(app->state, temp, 1);
-            entropy_bits += 1;
-            app->state->bits_from_temperature += 1;
-        }
-        
-        // SubGHz RSSI - high quality, but slower due to frequency switching
-        if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 10 == 0)) {
+        // SubGHz RSSI - HIGH QUALITY RF noise (10 bits per sample)
+        // Sample every 5 iterations for better throughput
+        if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 5 == 0)) {
             uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise();
             flipper_rng_add_entropy(app->state, rssi_noise, 10);
             entropy_bits += 10;
             app->state->bits_from_subghz_rssi += 10;
         }
         
-        // Infrared - good quality, ambient IR noise and timing variations
-        if((app->state->entropy_sources & EntropySourceInfraredNoise) && (counter % 25 == 0)) {
-            uint32_t ir_noise = flipper_rng_get_infrared_noise();
-            flipper_rng_add_entropy(app->state, ir_noise, 8);
-            entropy_bits += 8;
-            app->state->bits_from_infrared += 8;
-        }
+        // Infrared is now handled by persistent worker via callbacks
+        // No need to poll here anymore - entropy is added continuously
+        
         
         // Mix the entropy pool periodically
         mix_counter++;
@@ -137,12 +107,7 @@ int32_t flipper_rng_worker_thread(void* context) {
         
         if(should_output) {
             // Output data based on selected mode
-            if(app->state->output_mode == OutputModeUSB) {
-                // Send to USB CDC interface 1 (should work now in dual mode)
-                FURI_LOG_I(TAG, "Attempting to send %zu bytes to USB CDC interface 1", buffer_pos);
-                furi_hal_cdc_send(1, (uint8_t*)output_buffer, buffer_pos);
-                FURI_LOG_I(TAG, "USB send call completed");
-            } else if(app->state->output_mode == OutputModeUART) {
+            if(app->state->output_mode == OutputModeUART) {
                 // Send to GPIO UART (pins 13/14)
                 if(app->state->serial_handle) {
                     furi_hal_serial_tx(app->state->serial_handle, (uint8_t*)output_buffer, buffer_pos);

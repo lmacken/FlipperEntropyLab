@@ -8,6 +8,7 @@
 #include <gui/modules/variable_item_list.h>
 #include <gui/modules/text_box.h>
 #include <notification/notification_messages.h>
+#include <infrared_worker.h>
 #include <storage/storage.h>
 
 #define FLIPPER_RNG_VERSION "1.0"
@@ -15,31 +16,31 @@
 #define RNG_POOL_SIZE 4096
 #define RNG_OUTPUT_CHUNK_SIZE 64
 
-// Entropy source flags - Focused on high-quality, predictable sources
+// Entropy source flags - High-quality sources only
 typedef enum {
-    EntropySourceHardwareRNG = (1 << 0),        // STM32WB55 TRNG - always excellent
-    EntropySourceADC = (1 << 1),                // Multi-channel differential analog noise
-    EntropySourceBatteryVoltage = (1 << 2),     // Power supply environmental variations
-    EntropySourceTemperature = (1 << 3),        // Thermal environmental variations
-    EntropySourceSubGhzRSSI = (1 << 4),         // RF atmospheric noise (safe mode)
-    EntropySourceInfraredNoise = (1 << 5),      // IR ambient environmental noise
-    EntropySourceAll = 0x3F,
+    EntropySourceHardwareRNG = (1 << 0),        // STM32WB55 TRNG - HIGHEST QUALITY (32 bits)
+    EntropySourceSubGhzRSSI = (1 << 1),         // RF atmospheric noise - HIGH QUALITY (10 bits)
+    EntropySourceInfraredNoise = (1 << 2),      // IR ambient noise - HIGH QUALITY (8 bits)
+    EntropySourceAll = 0x07,                    // All high-quality sources
 } EntropySource;
 
 // Output mode - Visualization is always available, not an exclusive output mode
 typedef enum {
-    OutputModeUSB,
     OutputModeUART,
     OutputModeFile,
 } OutputMode;
 
 // View IDs
 typedef enum {
+    FlipperRngViewSplash,            // Splash screen
     FlipperRngViewMenu,
     FlipperRngViewConfig,
     FlipperRngViewOutput,
     FlipperRngViewVisualization,
+    FlipperRngViewByteDistribution,  // New: Byte Distribution
+    FlipperRngViewSourceStats,       // New: Entropy source comparison
     FlipperRngViewTest,
+    FlipperRngViewAbout,  // About view with QR code
 } FlipperRngView;
 
 // Application state
@@ -75,11 +76,8 @@ typedef struct {
     // Histogram data for byte distribution (0-255)
     uint32_t byte_histogram[16];  // 16 bins for visualization
     
-    // Per-source bit counters (track bits collected from each source)
+    // Per-source bit counters (high-quality sources only)
     uint32_t bits_from_hw_rng;
-    uint32_t bits_from_adc;
-    uint32_t bits_from_battery;
-    uint32_t bits_from_temperature;
     uint32_t bits_from_subghz_rssi;
     uint32_t bits_from_infrared;
 } FlipperRngState;
@@ -99,16 +97,27 @@ typedef struct {
     
     FlipperRngState* state;
     FuriThread* worker_thread;
+    FuriTimer* splash_timer;  // Timer for splash screen transition
     
     
     // Views
+    void* splash;  // Splash screen
     View* visualization_view;
+    View* byte_distribution_view;  // New: Byte Distribution view
+    View* source_stats_view;       // New: Entropy source stats view
     View* test_view;
+    View* about_view;  // About view with QR code
+    
+    // Persistent IR worker for continuous collection
+    InfraredWorker* ir_worker;
 } FlipperRngApp;
 
 // Function prototypes
 FlipperRngApp* flipper_rng_app_alloc(void);
 void flipper_rng_app_free(FlipperRngApp* app);
+
+// IR callback for persistent worker
+void flipper_rng_ir_callback(void* ctx, InfraredWorkerSignal* signal);
 
 // Entropy collection functions - High-quality, environment-independent sources
 void flipper_rng_collect_hardware_rng(FlipperRngState* state);
@@ -130,3 +139,5 @@ int32_t flipper_rng_worker_thread(void* context);
 // View callbacks
 void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context);
 bool flipper_rng_visualization_input_callback(InputEvent* event, void* context);
+
+// View callbacks are in flipper_rng_views.h

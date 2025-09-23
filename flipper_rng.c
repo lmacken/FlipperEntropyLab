@@ -1,54 +1,21 @@
 #include "flipper_rng.h"
 #include "flipper_rng_entropy.h"
 #include "flipper_rng_views.h"
+#include "flipper_rng_about.h"
+#include "flipper_rng_splash.h"
 #include <furi_hal_random.h>
 #include <furi_hal_adc.h>
 #include <furi_hal_power.h>
 #include <furi_hal_serial.h>
-#include <furi_hal_usb_cdc.h>
-#include <furi_hal_usb.h>
-#include <cli/cli_vcp.h>
 #include <furi_hal.h>
+#include <furi_hal_light.h>
 #include <power/power_service/power.h>
 #include <toolbox/stream/stream.h>
 #include <toolbox/stream/file_stream.h>
+#include <infrared.h>
 
 #define TAG "FlipperRNG"
 
-// Minimal CDC callbacks for interface 1
-static void flipper_rng_cdc_tx_complete(void* context) {
-    // Log when TX completes to verify callbacks are working
-    UNUSED(context);
-    FURI_LOG_D(TAG, "CDC TX complete callback fired");
-}
-
-static void flipper_rng_cdc_rx(void* context) {
-    // We don't receive data, only send
-    UNUSED(context);
-}
-
-static void flipper_rng_cdc_state(void* context, uint8_t state) {
-    UNUSED(context);
-    FURI_LOG_I(TAG, "CDC state changed: 0x%02X", state);
-}
-
-static void flipper_rng_cdc_ctrl_line(void* context, uint8_t state) {
-    UNUSED(context);
-    UNUSED(state);
-}
-
-static void flipper_rng_cdc_line_config(void* context, struct usb_cdc_line_coding* config) {
-    UNUSED(context);
-    UNUSED(config);
-}
-
-static const CdcCallbacks flipper_rng_cdc_cb = {
-    flipper_rng_cdc_tx_complete,
-    flipper_rng_cdc_rx,
-    flipper_rng_cdc_state,
-    flipper_rng_cdc_ctrl_line,
-    flipper_rng_cdc_line_config,
-};
 
 // LED status control functions
 static void flipper_rng_set_led_stopped(FlipperRngApp* app) {
@@ -70,6 +37,104 @@ static void flipper_rng_set_led_off(FlipperRngApp* app) {
     FURI_LOG_I(TAG, "LED turned OFF");
 }
 
+// Start IR worker for entropy collection
+static void flipper_rng_start_ir_worker(FlipperRngApp* app) {
+    if(app->ir_worker) {
+        FURI_LOG_W(TAG, "IR worker already running");
+        return;
+    }
+    
+    // Check if IR entropy is enabled
+    if(!(app->state->entropy_sources & EntropySourceInfraredNoise)) {
+        FURI_LOG_D(TAG, "IR entropy not enabled, skipping IR worker start");
+        return;
+    }
+    
+    FURI_LOG_I(TAG, "Starting IR worker for entropy collection...");
+    app->ir_worker = infrared_worker_alloc();
+    if(app->ir_worker) {
+        // Configure for both decoded and raw signal capture
+        infrared_worker_rx_enable_signal_decoding(app->ir_worker, true);
+        infrared_worker_rx_enable_blink_on_receiving(app->ir_worker, false);
+        
+        // Set up callback - pass app state so we can access entropy pool
+        infrared_worker_rx_set_received_signal_callback(
+            app->ir_worker, flipper_rng_ir_callback, app->state);
+        
+        // Start IR reception
+        infrared_worker_rx_start(app->ir_worker);
+        FURI_LOG_I(TAG, "IR worker started for entropy collection");
+    } else {
+        FURI_LOG_E(TAG, "Failed to allocate IR worker");
+    }
+}
+
+// Stop IR worker
+static void flipper_rng_stop_ir_worker(FlipperRngApp* app) {
+    if(!app->ir_worker) {
+        return;
+    }
+    
+    FURI_LOG_I(TAG, "Stopping IR worker...");
+    infrared_worker_rx_stop(app->ir_worker);
+    infrared_worker_free(app->ir_worker);
+    app->ir_worker = NULL;
+    FURI_LOG_I(TAG, "IR worker stopped");
+}
+
+// Persistent IR callback - runs continuously, accumulates entropy
+void flipper_rng_ir_callback(void* ctx, InfraredWorkerSignal* signal) {
+    FlipperRngState* state = (FlipperRngState*)ctx;
+    if(!state) return;
+    
+    // Quick blue LED flash
+    furi_hal_light_set(LightBlue, 100);
+    
+    const uint32_t* timings = NULL;
+    size_t timings_cnt = 0;
+    uint32_t local_entropy = DWT->CYCCNT;  // Start with CPU cycles
+    
+    // Check if signal is decoded or raw
+    if(infrared_worker_signal_is_decoded(signal)) {
+        const InfraredMessage* message = infrared_worker_get_decoded_signal(signal);
+        if(message) {
+            // Mix protocol data into entropy
+            local_entropy ^= message->protocol;
+            local_entropy ^= (message->address << 8);
+            local_entropy ^= (message->command << 16);
+            local_entropy ^= (message->repeat ? 0xAAAAAAAA : 0x55555555);
+            
+            FURI_LOG_D(TAG, "IR decoded: proto=%d, addr=0x%lX, cmd=0x%lX", 
+                      message->protocol, message->address, message->command);
+            
+            // Add to entropy pool directly (8 bits of entropy)
+            flipper_rng_add_entropy(state, local_entropy, 8);
+            state->bits_from_infrared += 8;
+        }
+    } else {
+        // Get raw signal timings
+        infrared_worker_get_raw_signal(signal, &timings, &timings_cnt);
+        
+        if(timings_cnt > 0) {
+            // Mix timing values into entropy
+            for(size_t i = 0; i < timings_cnt && i < 32; i++) {
+                local_entropy = (local_entropy << 3) ^ (local_entropy >> 29) ^ timings[i];
+                local_entropy += i * 0x9E3779B9;  // Golden ratio for mixing
+            }
+            
+            FURI_LOG_D(TAG, "IR raw: %zu samples", timings_cnt);
+            
+            // Add to entropy pool (more bits for raw signals)
+            uint8_t entropy_bits = (timings_cnt > 16) ? 16 : 8;
+            flipper_rng_add_entropy(state, local_entropy, entropy_bits);
+            state->bits_from_infrared += entropy_bits;
+        }
+    }
+    
+    // Turn off blue LED
+    furi_hal_light_set(LightBlue, 0);
+}
+
 
 
 // Menu items
@@ -77,10 +142,10 @@ typedef enum {
     FlipperRngMenuToggle,  // Combined Start/Stop
     FlipperRngMenuConfig,
     FlipperRngMenuVisualization,
-    FlipperRngMenuStats,
+    FlipperRngMenuByteDistribution,  // New: Byte Distribution
+    FlipperRngMenuSourceStats,        // New: Source comparison
     FlipperRngMenuTest,
     FlipperRngMenuAbout,
-    FlipperRngMenuQuit,
 } FlipperRngMenuItem;
 
 static void flipper_rng_menu_callback(void* context, uint32_t index) {
@@ -96,11 +161,6 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             FURI_LOG_I(TAG, "Force stopping any existing worker thread...");
             app->state->is_running = false;
         
-        // Clean up any existing USB configuration
-        if(app->state->output_mode == OutputModeUSB) {
-            furi_hal_cdc_set_callbacks(1, NULL, NULL);
-            FURI_LOG_I(TAG, "Cleared existing USB callbacks");
-        }
         
         // Wait for thread to actually stop if it's running
         if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
@@ -112,8 +172,7 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         // Now start with current settings
         FURI_LOG_I(TAG, "Starting worker thread with current settings...");
         
-        // Initialize output interface based on mode
-        if(app->state->output_mode == OutputModeUART && !app->state->serial_handle) {
+        if(app->state->output_mode == OutputModeUART) {
             FURI_LOG_I(TAG, "Initializing UART for output...");
             app->state->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
             if(app->state->serial_handle) {
@@ -122,68 +181,6 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             } else {
                 FURI_LOG_E(TAG, "Failed to acquire UART");
             }
-        } else if(app->state->output_mode == OutputModeUSB) {
-            FURI_LOG_I(TAG, "Setting up USB CDC interface 1 (like GPIO USB UART bridge)...");
-            
-            // Get CLI VCP handle
-            CliVcp* cli_vcp = furi_record_open(RECORD_CLI_VCP);
-            
-            // Disable CLI VCP temporarily
-            cli_vcp_disable(cli_vcp);
-            
-            // Switch to dual CDC mode - use reinit to force the change
-            furi_hal_usb_unlock();
-            
-            // Get current config to check if we're already in dual mode
-            FuriHalUsbInterface* current = furi_hal_usb_get_config();
-            FURI_LOG_I(TAG, "Current USB config: %p, dual: %p, single: %p", 
-                       current, &usb_cdc_dual, &usb_cdc_single);
-            
-            // If not in dual mode, force it
-            if(current != &usb_cdc_dual) {
-                FURI_LOG_I(TAG, "Not in dual mode, forcing USB reinit...");
-                
-                // Force USB to reinitialize with dual CDC mode
-                furi_hal_usb_disable();
-                furi_delay_ms(100);
-                
-                if(furi_hal_usb_set_config(&usb_cdc_dual, NULL)) {
-                    FURI_LOG_I(TAG, "USB config set to dual CDC");
-                } else {
-                    FURI_LOG_W(TAG, "USB config change failed, trying reinit");
-                    furi_hal_usb_reinit();
-                    furi_delay_ms(100);
-                    furi_hal_usb_set_config(&usb_cdc_dual, NULL);
-                }
-                
-                furi_hal_usb_enable();
-                FURI_LOG_I(TAG, "USB re-enabled");
-            } else {
-                FURI_LOG_I(TAG, "Already in dual CDC mode");
-            }
-            
-            // Re-enable CLI VCP on interface 0  
-            cli_vcp_enable(cli_vcp);
-            FURI_LOG_I(TAG, "CLI VCP re-enabled on interface 0");
-            
-            // CRITICAL: Set callbacks for interface 1 to make it functional
-            furi_hal_cdc_set_callbacks(1, (CdcCallbacks*)&flipper_rng_cdc_cb, app);
-            FURI_LOG_I(TAG, "CDC callbacks set for interface 1");
-            
-            // Give USB more time to settle and enumerate both interfaces
-            FURI_LOG_I(TAG, "Waiting for USB enumeration...");
-            furi_delay_ms(1000);
-            
-            // Verify the configuration took effect
-            FuriHalUsbInterface* new_config = furi_hal_usb_get_config();
-            if(new_config == &usb_cdc_dual) {
-                FURI_LOG_I(TAG, "USB CDC dual mode confirmed - interface 1 ready");
-            } else {
-                FURI_LOG_E(TAG, "USB config still not dual! Got %p, expected %p", 
-                           new_config, &usb_cdc_dual);
-            }
-            
-            furi_record_close(RECORD_CLI_VCP);
         }
         
         // Make sure thread is not running
@@ -196,9 +193,6 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         app->state->bytes_generated = 0;
         app->state->samples_collected = 0;
         app->state->bits_from_hw_rng = 0;
-        app->state->bits_from_adc = 0;
-        app->state->bits_from_battery = 0;
-        app->state->bits_from_temperature = 0;
         app->state->bits_from_subghz_rssi = 0;
         app->state->bits_from_infrared = 0;
         memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
@@ -207,18 +201,21 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             app->state->is_running = true;
             furi_thread_start(app->worker_thread);
             flipper_rng_set_led_generating(app);  // Set LED to green
+            
+            // Start IR worker if IR entropy is enabled
+            flipper_rng_start_ir_worker(app);
+            
+            // Update menu text to "Stop Generator"
+            submenu_change_item_label(app->submenu, FlipperRngMenuToggle, "Stop Generator");
+            
             FURI_LOG_I(TAG, "Worker thread started from menu, is_running=%d", app->state->is_running);
         } else {
             // Stop the generator
             FURI_LOG_I(TAG, "Stopping worker thread...");
             app->state->is_running = false;
             
-            // Clean up USB if it was used
-            if(app->state->output_mode == OutputModeUSB) {
-                // Clear callbacks for interface 1
-                furi_hal_cdc_set_callbacks(1, NULL, NULL);
-                FURI_LOG_I(TAG, "USB CDC callbacks cleared");
-            }
+            // Stop IR worker
+            flipper_rng_stop_ir_worker(app);
             
             // Release UART if it was acquired
             if(app->state->serial_handle) {
@@ -229,6 +226,10 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
             }
             
             flipper_rng_set_led_stopped(app);  // Set LED to red
+            
+            // Update menu text back to "Start Generator"
+            submenu_change_item_label(app->submenu, FlipperRngMenuToggle, "Start Generator");
+            
             // Don't block GUI thread with join - let worker exit on its own
         }
         break;
@@ -265,99 +266,38 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewVisualization);
         break;
         
+    case FlipperRngMenuByteDistribution:
+        FURI_LOG_I(TAG, "Switching to byte distribution view");
+        // Initialize byte distribution model with current state
+        with_view_model(
+            app->byte_distribution_view,
+            FlipperRngVisualizationModel* model,
+            {
+                model->is_running = app->state->is_running;
+                model->bytes_generated = app->state->bytes_generated;
+                model->viz_mode = 2;  // Histogram mode
+                // Copy histogram data
+                for(int i = 0; i < 16; i++) {
+                    model->histogram[i] = app->state->byte_histogram[i];
+                }
+            },
+            true
+        );
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewByteDistribution);
+        break;
+        
+    case FlipperRngMenuSourceStats:
+        FURI_LOG_I(TAG, "Source stats selected");
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewSourceStats);
+        break;
+        
     case FlipperRngMenuTest:
         FURI_LOG_I(TAG, "Test RNG Quality selected");
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewTest);
         break;
         
-    case FlipperRngMenuStats:
-        {
-            furi_string_reset(app->text_box_store);
-            
-            // Calculate total entropy bits - High-quality sources only
-            uint32_t total_bits = app->state->bits_from_hw_rng + 
-                                  app->state->bits_from_adc + 
-                                  app->state->bits_from_battery + 
-                                  app->state->bits_from_temperature + 
-                                  app->state->bits_from_subghz_rssi + 
-                                  app->state->bits_from_infrared;
-            
-            // Build the statistics display
-            furi_string_printf(
-                app->text_box_store,
-                "=== RNG Statistics ===\n"
-                "Output: %lu bytes\n"
-                "Rate: %d bits/sec\n\n"
-                "--- Entropy Sources ---\n",
-                app->state->bytes_generated,
-                (int)app->state->entropy_rate
-            );
-            
-            // Show each high-quality source with bits collected
-            if(app->state->entropy_sources & EntropySourceHardwareRNG) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "HW RNG: %lu bits\n", app->state->bits_from_hw_rng);
-            }
-            if(app->state->entropy_sources & EntropySourceADC) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "ADC: %lu bits\n", app->state->bits_from_adc);
-            }
-            if(app->state->entropy_sources & EntropySourceBatteryVoltage) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "Battery: %lu bits\n", app->state->bits_from_battery);
-            }
-            if(app->state->entropy_sources & EntropySourceTemperature) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "Temp: %lu bits\n", app->state->bits_from_temperature);
-            }
-            if(app->state->entropy_sources & EntropySourceSubGhzRSSI) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "SubGHz: %lu bits\n", app->state->bits_from_subghz_rssi);
-            }
-            if(app->state->entropy_sources & EntropySourceInfraredNoise) {
-                furi_string_cat_printf(app->text_box_store, 
-                    "IR: %lu bits\n", app->state->bits_from_infrared);
-            }
-            
-            furi_string_cat_printf(app->text_box_store, 
-                "\nTotal: %lu bits\n"
-                "Pool: %zu/%d\n",
-                total_bits,
-                app->state->entropy_pool_pos,
-                RNG_POOL_SIZE
-            );
-            
-            text_box_set_text(app->text_box, furi_string_get_cstr(app->text_box_store));
-            view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewOutput);
-        }
-        break;
-        
     case FlipperRngMenuAbout:
-        furi_string_reset(app->text_box_store);
-        furi_string_printf(
-            app->text_box_store,
-            "FlipperRNG v%s\n\n"
-            "High-quality entropy\n"
-            "generator using multiple\n"
-            "hardware sources.\n\n"
-            "Author: Luke Macken\n"
-            "<luke@phorex.org>\n",
-            FLIPPER_RNG_VERSION
-        );
-        text_box_set_text(app->text_box, furi_string_get_cstr(app->text_box_store));
-        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewOutput);
-        break;
-        
-    case FlipperRngMenuQuit:
-        FURI_LOG_I(TAG, "Quit selected, stopping view dispatcher");
-        // Stop worker if running
-        if(app->state->is_running) {
-            app->state->is_running = false;
-            // Give worker time to stop
-            furi_delay_ms(50);
-        }
-        // Switch to a special "exit" view which will cause the dispatcher to stop
-        view_dispatcher_switch_to_view(app->view_dispatcher, VIEW_NONE);
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewAbout);
         break;
     }
 }
@@ -392,7 +332,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     }
     app->state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->state->entropy_sources = EntropySourceAll;
-    app->state->output_mode = OutputModeUSB;  // Default to USB, visualization always available
+    app->state->output_mode = OutputModeUART;  // Default to UART
     app->state->poll_interval_ms = 10;
     app->state->visual_refresh_ms = 200;  // Default 200ms visual refresh rate
     app->state->is_running = false;
@@ -400,9 +340,6 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->bytes_generated = 0;
     app->state->samples_collected = 0;
     app->state->bits_from_hw_rng = 0;
-    app->state->bits_from_adc = 0;
-    app->state->bits_from_battery = 0;
-    app->state->bits_from_temperature = 0;
     app->state->bits_from_subghz_rssi = 0;
     app->state->bits_from_infrared = 0;
     memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
@@ -449,14 +386,14 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     
     // Main menu
     app->submenu = submenu_alloc();
-    submenu_set_header(app->submenu, "FlipperRNG v1.0");
-    submenu_add_item(app->submenu, "Start/Stop Generator", FlipperRngMenuToggle, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Configuration", FlipperRngMenuConfig, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Visualization", FlipperRngMenuVisualization, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Statistics", FlipperRngMenuStats, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Test RNG Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
+    submenu_set_header(app->submenu, "FlipperRNG");
+    submenu_add_item(app->submenu, "Start Generator", FlipperRngMenuToggle, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Config", FlipperRngMenuConfig, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Visualize", FlipperRngMenuVisualization, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Distribution", FlipperRngMenuByteDistribution, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Sources", FlipperRngMenuSourceStats, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Test Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "About", FlipperRngMenuAbout, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Quit", FlipperRngMenuQuit, flipper_rng_menu_callback, app);
     
     View* submenu_view = submenu_get_view(app->submenu);
     // Set exit callback for back button on main menu
@@ -487,6 +424,24 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->visualization_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewVisualization, app->visualization_view);
     
+    // Byte Distribution view
+    app->byte_distribution_view = view_alloc();
+    view_set_context(app->byte_distribution_view, app);
+    view_allocate_model(app->byte_distribution_view, ViewModelTypeLocking, sizeof(FlipperRngVisualizationModel));
+    view_set_draw_callback(app->byte_distribution_view, flipper_rng_byte_distribution_draw_callback);
+    view_set_input_callback(app->byte_distribution_view, flipper_rng_byte_distribution_input_callback);
+    view_set_previous_callback(app->byte_distribution_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewByteDistribution, app->byte_distribution_view);
+    
+    // Source stats view
+    app->source_stats_view = view_alloc();
+    view_set_context(app->source_stats_view, app);
+    view_allocate_model(app->source_stats_view, ViewModelTypeLocking, sizeof(FlipperRngVisualizationModel));
+    view_set_draw_callback(app->source_stats_view, flipper_rng_source_stats_draw_callback);
+    view_set_input_callback(app->source_stats_view, flipper_rng_source_stats_input_callback);
+    view_set_previous_callback(app->source_stats_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewSourceStats, app->source_stats_view);
+    
     // Test view
     app->test_view = view_alloc();
     view_set_context(app->test_view, app);
@@ -496,6 +451,16 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->test_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewTest, app->test_view);
     
+    // About view with QR code
+    app->about_view = flipper_rng_about_view_alloc();
+    view_set_previous_callback(app->about_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewAbout, app->about_view);
+    
+    // Splash screen
+    app->splash = flipper_rng_splash_alloc();
+    View* splash_view = flipper_rng_splash_get_view(app->splash);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewSplash, splash_view);
+    
     // Create worker thread
     app->worker_thread = furi_thread_alloc();
     furi_thread_set_name(app->worker_thread, "FlipperRngWorker");
@@ -503,9 +468,12 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     furi_thread_set_callback(app->worker_thread, flipper_rng_worker_thread);
     furi_thread_set_context(app->worker_thread, app);
     
-    // Switch to main menu
-    FURI_LOG_I(TAG, "Switching to main menu view...");
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewMenu);
+    // Initialize IR worker (but don't start it yet)
+    app->ir_worker = NULL;  // Will be allocated when generation starts
+    
+    // Start with splash screen
+    FURI_LOG_I(TAG, "Showing splash screen...");
+    view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewSplash);
     
     // Set initial LED status (red = stopped) - do this last when everything is ready
     FURI_LOG_I(TAG, "Setting initial LED state to RED (stopped)...");
@@ -525,6 +493,9 @@ void flipper_rng_app_free(FlipperRngApp* app) {
         furi_thread_join(app->worker_thread);
     }
     
+    // Stop and free IR worker if it exists
+    flipper_rng_stop_ir_worker(app);
+    
     // Turn off all LEDs before exiting
     flipper_rng_set_led_off(app);
     
@@ -538,14 +509,22 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewConfig);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewOutput);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewVisualization);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewByteDistribution);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSourceStats);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewTest);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewAbout);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSplash);
     
     submenu_free(app->submenu);
     variable_item_list_free(app->variable_item_list);
     text_box_free(app->text_box);
     furi_string_free(app->text_box_store);
     view_free(app->visualization_view);
+    view_free(app->byte_distribution_view);
+    view_free(app->source_stats_view);
     view_free(app->test_view);
+    flipper_rng_about_view_free(app->about_view);
+    flipper_rng_splash_free(app->splash);
     
     view_dispatcher_free(app->view_dispatcher);
     
@@ -558,8 +537,10 @@ void flipper_rng_app_free(FlipperRngApp* app) {
         furi_hal_adc_release(app->state->adc_handle);
     }
     if(app->state->serial_handle) {
+        furi_hal_serial_deinit(app->state->serial_handle);
         furi_hal_serial_control_release(app->state->serial_handle);
     }
+    
     
     // Free test buffer if allocated
     if(app->state->test_buffer) {
@@ -573,6 +554,20 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     free(app);
 }
 
+static void flipper_rng_splash_check_timer(void* context) {
+    FlipperRngApp* app = context;
+    
+    // Check if splash is done
+    if(flipper_rng_splash_is_done(app->splash)) {
+        // Stop checking
+        furi_timer_stop(app->splash_timer);
+        
+        // Switch to main menu
+        FURI_LOG_I(TAG, "Splash done, switching to menu");
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewMenu);
+    }
+}
+
 int32_t flipper_rng_app(void* p) {
     UNUSED(p);
     
@@ -584,8 +579,22 @@ int32_t flipper_rng_app(void* p) {
         return -1;
     }
     
+    // Create timer to check when splash is done
+    app->splash_timer = furi_timer_alloc(
+        flipper_rng_splash_check_timer,
+        FuriTimerTypePeriodic,
+        app
+    );
+    furi_timer_start(app->splash_timer, 100); // Check every 100ms
+    
     FURI_LOG_I(TAG, "App allocated, starting view dispatcher");
     view_dispatcher_run(app->view_dispatcher);
+    
+    // Clean up splash timer
+    if(app->splash_timer) {
+        furi_timer_stop(app->splash_timer);
+        furi_timer_free(app->splash_timer);
+    }
     
     FURI_LOG_I(TAG, "View dispatcher exited, cleaning up");
     flipper_rng_app_free(app);
