@@ -66,10 +66,13 @@ int32_t flipper_rng_worker_thread(void* context) {
         // SubGHz RSSI - ENHANCED HIGH QUALITY RF noise (16 bits per sample)
         // Sample every 3 iterations - improved implementation is more efficient
         if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 3 == 0)) {
-            uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise();
-            flipper_rng_add_entropy(app->state, rssi_noise, 16);
-            entropy_bits += 16;
-            app->state->bits_from_subghz_rssi += 16;
+            // Pass state to allow early exit on stop
+            flipper_rng_collect_subghz_rssi_entropy(app->state);
+            // Only count bits if we're still running
+            if(app->state->is_running) {
+                entropy_bits += 16;
+                app->state->bits_from_subghz_rssi += 16;
+            }
         }
         
         // Infrared is now handled by persistent worker via callbacks

@@ -37,6 +37,7 @@ uint32_t flipper_rng_get_adc_noise(FuriHalAdcHandle* handle);
 uint32_t flipper_rng_get_battery_noise(void);
 uint32_t flipper_rng_get_temperature_noise(void);
 uint32_t flipper_rng_get_subghz_rssi_noise(void);
+uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state);
 uint32_t flipper_rng_get_infrared_noise(void);
 
 // Entropy processing

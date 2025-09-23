@@ -234,8 +234,13 @@ void flipper_rng_collect_hardware_rng(FlipperRngState* state) {
 // Now focusing only on high-quality sources: HW RNG, SubGHz RSSI, Infrared
 
 // Get SubGHz RSSI noise - Enhanced hardware implementation with improved entropy
-uint32_t flipper_rng_get_subghz_rssi_noise(void) {
+uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     uint32_t entropy = 0;
+    
+    // Early exit if we're stopping
+    if(state && !state->is_running) {
+        return 0;
+    }
     
     FURI_LOG_D(TAG, "SubGHz RSSI: Starting enhanced hardware RSSI collection");
     
@@ -366,6 +371,12 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     uint8_t prime_hop = 7;  // Prime number for good distribution
     
     for(int i = 0; i < samples_to_take && byte_idx < 4; i++) {
+        // Check if we should stop early
+        if(state && !state->is_running) {
+            FURI_LOG_D(TAG, "SubGHz RSSI: Early exit due to stop request");
+            break;
+        }
+        
         // Use prime-based hopping for better frequency distribution
         // This avoids repeating the same frequency too often
         uint8_t freq_idx;
@@ -517,12 +528,19 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     return entropy;
 }
 
+// Backward compatibility wrapper
+uint32_t flipper_rng_get_subghz_rssi_noise(void) {
+    return flipper_rng_get_subghz_rssi_noise_ex(NULL);
+}
+
 void flipper_rng_collect_subghz_rssi_entropy(FlipperRngState* state) {
     if(state->entropy_sources & EntropySourceSubGhzRSSI) {
-        uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise();
+        uint32_t rssi_noise = flipper_rng_get_subghz_rssi_noise_ex(state);
         // Enhanced implementation provides ~16-20 bits of quality entropy
         // due to RSSI variance, multiple samples, and wider frequency coverage
-        flipper_rng_add_entropy(state, rssi_noise, 16); // Enhanced quality RF noise
+        if(rssi_noise != 0) {  // Only add if we got entropy
+            flipper_rng_add_entropy(state, rssi_noise, 16); // Enhanced quality RF noise
+        }
     }
 }
 
