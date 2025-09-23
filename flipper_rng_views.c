@@ -900,8 +900,8 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
         // Draw histogram bars
         int bar_width = 7;
         int bar_spacing = 1;
-        int max_height = 30;  // Reduced height to make room for header
-        int base_y = 55;
+        int max_height = 28;  // Reduced height to make room for labels
+        int base_y = 52;      // Moved up to make room for labels below
         
         for(int i = 0; i < 16; i++) {
             int bar_height = (model->histogram[i] * max_height) / max_val;
@@ -915,11 +915,11 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
         // Draw axis
         canvas_draw_line(canvas, 0, base_y + 1, 127, base_y + 1);
         
-        // Labels for bins
+        // Labels for bins - positioned below axis with proper spacing
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 63, "0");
-        canvas_draw_str(canvas, 60, 63, "7F");
-        canvas_draw_str(canvas, 115, 63, "FF");
+        canvas_draw_str(canvas, 2, 62, "0");
+        canvas_draw_str(canvas, 58, 62, "7F");
+        canvas_draw_str(canvas, 112, 62, "FF");
     } else {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 20, 35, "Start generator");
