@@ -237,7 +237,7 @@ void flipper_rng_collect_hardware_rng(FlipperRngState* state) {
 uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     uint32_t entropy = 0;
     
-    FURI_LOG_I(TAG, "SubGHz RSSI: Starting enhanced hardware RSSI collection");
+    FURI_LOG_D(TAG, "SubGHz RSSI: Starting enhanced hardware RSSI collection");
     
     // Optimized frequency set based on regional validation
     // Focus on frequencies that work globally without blocks
@@ -313,7 +313,7 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     uint32_t test_freq = furi_hal_subghz_set_frequency(433920000);
     if(test_freq > 0) {
         subghz_available = true;
-        FURI_LOG_I(TAG, "SubGHz RSSI: Hardware ready at %lu Hz", test_freq);
+        FURI_LOG_D(TAG, "SubGHz RSSI: Hardware ready at %lu Hz", test_freq);
     } else {
         FURI_LOG_W(TAG, "SubGHz RSSI: Hardware not responding, using timing entropy");
     }
@@ -361,21 +361,17 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
     FURI_LOG_D(TAG, "SubGHz RSSI: Sampling %u frequencies from %zu valid", 
               samples_to_take, valid_count);
     
-    // Non-consecutive frequency hopping pattern
-    // Adaptive pattern based on number of valid frequencies
+    // Non-consecutive frequency hopping with prime-based distribution
+    // This ensures we sample different frequencies each time
+    uint8_t prime_hop = 7;  // Prime number for good distribution
+    
     for(int i = 0; i < samples_to_take && byte_idx < 4; i++) {
-        // Simple non-consecutive hopping: alternate between lower and upper half
-        // then move inward for better coverage
+        // Use prime-based hopping for better frequency distribution
+        // This avoids repeating the same frequency too often
         uint8_t freq_idx;
         if(valid_count > 1) {
-            // Alternate between different parts of the frequency list
-            if(i % 2 == 0) {
-                // Even: start from beginning
-                freq_idx = (freq_offset + i/2) % valid_count;
-            } else {
-                // Odd: start from middle
-                freq_idx = (freq_offset + valid_count/2 + i/2) % valid_count;
-            }
+            // Prime-based hopping with random offset ensures good coverage
+            freq_idx = (freq_offset + (i * prime_hop)) % valid_count;
         } else {
             freq_idx = 0;  // Only one frequency available
         }
@@ -463,8 +459,11 @@ uint32_t flipper_rng_get_subghz_rssi_noise(void) {
                 noise_byte = (noise_byte << 1) | (noise_byte >> 7);
                 noise_byte ^= timing_bits;
                 
-                FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu MHz, RSSI=%.1f dBm (var=%.2f), LQI=%u, byte=0x%02X", 
-                          frequency/1000000, (double)rssi_avg, (double)rssi_variance, lqi_samples[0], noise_byte);
+                // Only log detailed info for some samples to reduce spam
+                if(byte_idx <= 2 || (byte_idx == 3 && i == samples_to_take - 1)) {
+                    FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu MHz, RSSI=%.1f dBm (var=%.2f), LQI=%u, byte=0x%02X", 
+                              frequency/1000000, (double)rssi_avg, (double)rssi_variance, lqi_samples[0], noise_byte);
+                }
                 
                 // Return to idle between frequencies
                 furi_hal_subghz_idle();
