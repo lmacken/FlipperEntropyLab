@@ -7,16 +7,14 @@
 
 // Configuration options
 static const char* entropy_source_names[] = {
-    "All",
-    "HW RNG",
-    "ADC+HW",
-    "RF+HW",
-    "IR+HW",
-    "Env Only",
+    "All HQ",
+    "HW Only",
+    "HW+RF", 
+    "HW+IR",
+    "RF+IR",
 };
 
 static const char* output_mode_names[] = {
-    "USB",
     "UART",
     "File",
 };
@@ -46,12 +44,11 @@ static const uint32_t poll_interval_values[] = {
 };
 
 static const uint32_t entropy_source_values[] = {
-    EntropySourceAll,                                                              // All 6 sources
+    EntropySourceAll,                                                              // All high-quality
     EntropySourceHardwareRNG,                                                      // HW RNG only
-    EntropySourceHardwareRNG | EntropySourceADC,                                  // ADC+HW
-    EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // RF+HW
-    EntropySourceHardwareRNG | EntropySourceInfraredNoise,                       // IR+HW
-    EntropySourceBatteryVoltage | EntropySourceTemperature | EntropySourceADC,   // Env Only
+    EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // HW + RF
+    EntropySourceHardwareRNG | EntropySourceInfraredNoise,                       // HW + IR
+    EntropySourceSubGhzRSSI | EntropySourceInfraredNoise,                        // RF + IR only
 };
 
 void flipper_rng_source_changed(VariableItem* item) {
@@ -62,20 +59,17 @@ void flipper_rng_source_changed(VariableItem* item) {
     case 0: // All high-quality sources
         app->state->entropy_sources = EntropySourceAll;
         break;
-    case 1: // HW RNG only
+    case 1: // HW RNG only (fastest)
         app->state->entropy_sources = EntropySourceHardwareRNG;
         break;
-    case 2: // ADC + HW RNG
-        app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceADC;
-        break;
-    case 3: // RF + HW RNG
+    case 2: // HW + RF (hardware + atmospheric)
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceSubGhzRSSI;
         break;
-    case 4: // IR + HW RNG
+    case 3: // HW + IR (hardware + ambient)
         app->state->entropy_sources = EntropySourceHardwareRNG | EntropySourceInfraredNoise;
         break;
-    case 5: // Environmental only (no HW RNG)
-        app->state->entropy_sources = EntropySourceBatteryVoltage | EntropySourceTemperature | EntropySourceADC;
+    case 4: // RF + IR only (pure environmental)
+        app->state->entropy_sources = EntropySourceSubGhzRSSI | EntropySourceInfraredNoise;
         break;
     }
     
@@ -105,6 +99,7 @@ void flipper_rng_visual_refresh_changed(VariableItem* item) {
     app->state->visual_refresh_ms = visual_refresh_values[index];
     variable_item_set_current_value_text(item, visual_refresh_names[index]);
 }
+
 
 void flipper_rng_setup_config_view(FlipperRngApp* app) {
     VariableItem* item;
@@ -277,54 +272,6 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             canvas_draw_str(canvas, 30, 30, "Start generator");
             canvas_draw_str(canvas, 40, 40, "for visualization");
         }
-    } else if(model->viz_mode == 2) {
-        // MODE 2: Histogram visualization
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 8, "Byte Distribution");
-        
-        canvas_set_font(canvas, FontSecondary);
-        
-        if(model->is_running) {
-            // Find max value for scaling
-            uint32_t max_val = 1;
-            for(int i = 0; i < 16; i++) {
-                if(model->histogram[i] > max_val) {
-                    max_val = model->histogram[i];
-                }
-            }
-            
-            // Draw histogram bars
-            int bar_width = 7;
-            int bar_spacing = 1;
-            int max_height = 40;
-            int base_y = 55;
-            
-            for(int i = 0; i < 16; i++) {
-                int bar_height = (model->histogram[i] * max_height) / max_val;
-                if(bar_height > 0) {
-                    int x = 2 + i * (bar_width + bar_spacing);
-                    // Draw bar
-                    canvas_draw_box(canvas, x, base_y - bar_height, bar_width, bar_height);
-                }
-            }
-            
-            // Draw axis
-            canvas_draw_line(canvas, 0, base_y + 1, 127, base_y + 1);
-            
-            // Labels for bins
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 63, "0");
-            canvas_draw_str(canvas, 60, 63, "7F");
-            canvas_draw_str(canvas, 115, 63, "FF");
-            
-            // Show total bytes analyzed
-            char buffer[32];
-            snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
-            canvas_draw_str(canvas, 70, 8, buffer);
-        } else {
-            canvas_draw_str(canvas, 20, 30, "Start generator");
-            canvas_draw_str(canvas, 20, 40, "to see histogram");
-        }
     }
 }
 
@@ -360,22 +307,6 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
                 );
                 consumed = true;
             }
-        } else if(event->key == InputKeyUp) {
-            // Switch to histogram mode (mode 2)
-            FURI_LOG_I(TAG, "Up button pressed - showing histogram");
-            with_view_model(
-                app->visualization_view,
-                FlipperRngVisualizationModel* model,
-                {
-                    model->viz_mode = 2; // Histogram mode
-                    // Copy histogram data
-                    for(int i = 0; i < 16; i++) {
-                        model->histogram[i] = app->state->byte_histogram[i];
-                    }
-                },
-                true
-            );
-            consumed = true;
         } else {
             FURI_LOG_I(TAG, "Visualization: OK pressed while stopped, going back");
             return false; // Return to menu when OK is pressed while stopped
@@ -386,30 +317,89 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
 }
 
 void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t length) {
-    if(!app || !app->visualization_view) {
+    if(!app) {
         return;
     }
     
-    with_view_model(
-        app->visualization_view,
-        FlipperRngVisualizationModel* model,
-        {
-            // Copy new random data
-            size_t copy_len = MIN(length, (size_t)128);
-            if(data && copy_len > 0) {
-                memcpy(model->random_data, data, copy_len);
-            }
-            
-            // Update statistics
-            model->is_running = app->state->is_running;
-            model->bytes_generated = app->state->bytes_generated;
-            model->data_pos = (model->data_pos + 1) % 128;
-            
-            // Don't update walk position here - let the draw callback handle it
-            // This prevents the walk from drifting as data updates
-        },
-        true
-    );
+    // Update visualization view if it exists
+    if(app->visualization_view) {
+        with_view_model(
+            app->visualization_view,
+            FlipperRngVisualizationModel* model,
+            {
+                // Copy new random data
+                size_t copy_len = MIN(length, (size_t)128);
+                if(data && copy_len > 0) {
+                    memcpy(model->random_data, data, copy_len);
+                }
+                
+                // Update statistics
+                model->is_running = app->state->is_running;
+                model->bytes_generated = app->state->bytes_generated;
+                model->data_pos = (model->data_pos + 1) % 128;
+                
+                // Don't update walk position here - let the draw callback handle it
+                // This prevents the walk from drifting as data updates
+            },
+            true
+        );
+    }
+    
+    // Also update byte distribution view if it exists
+    if(app->byte_distribution_view) {
+        with_view_model(
+            app->byte_distribution_view,
+            FlipperRngVisualizationModel* model,
+            {
+                model->is_running = app->state->is_running;
+                model->bytes_generated = app->state->bytes_generated;
+                // Copy histogram data
+                for(int i = 0; i < 16; i++) {
+                    model->histogram[i] = app->state->byte_histogram[i];
+                }
+            },
+            true
+        );
+    }
+    
+    // Also update source stats view if it exists
+    if(app->source_stats_view) {
+        with_view_model(
+            app->source_stats_view,
+            FlipperRngVisualizationModel* model,
+            {
+                model->is_running = app->state->is_running;
+                model->bytes_generated = app->state->bytes_generated;
+                model->bits_from_hw_rng = app->state->bits_from_hw_rng;
+                model->bits_from_subghz_rssi = app->state->bits_from_subghz_rssi;
+                model->bits_from_infrared = app->state->bits_from_infrared;
+                
+                // Set start time when generation starts
+                if(model->is_running && model->start_time_ms == 0) {
+                    model->start_time_ms = furi_get_tick();
+                } else if(!model->is_running) {
+                    model->start_time_ms = 0;  // Reset when stopped
+                }
+                
+                // Calculate display values based on current mode
+                // This happens only when the model updates, not on every draw
+                if(model->show_bits_per_sec && model->is_running) {
+                    uint32_t elapsed_ms = furi_get_tick() - model->start_time_ms;
+                    float elapsed_sec = elapsed_ms / 1000.0f;
+                    if(elapsed_sec < 0.1f) elapsed_sec = 0.1f;
+                    
+                    model->hw_display_value = (uint32_t)(model->bits_from_hw_rng / elapsed_sec);
+                    model->rf_display_value = (uint32_t)(model->bits_from_subghz_rssi / elapsed_sec);
+                    model->ir_display_value = (uint32_t)(model->bits_from_infrared / elapsed_sec);
+                } else {
+                    model->hw_display_value = model->bits_from_hw_rng;
+                    model->rf_display_value = model->bits_from_subghz_rssi;
+                    model->ir_display_value = model->bits_from_infrared;
+                }
+            },
+            true
+        );
+    }
 }
 
 // Test view callbacks
@@ -879,4 +869,190 @@ void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t len
         },
         true
     );
+}
+
+// Byte Distribution view callbacks
+void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) {
+    FlipperRngVisualizationModel* model = context;
+    
+    // Clear canvas
+    canvas_clear(canvas);
+    
+    // Draw header
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "Byte Distribution");
+    
+    if(model->is_running) {
+        // Show total bytes analyzed on second line
+        canvas_set_font(canvas, FontSecondary);
+        char buffer[32];
+        snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
+        canvas_draw_str(canvas, 2, 20, buffer);
+        
+        // Find max value for scaling
+        uint32_t max_val = 1;
+        for(int i = 0; i < 16; i++) {
+            if(model->histogram[i] > max_val) {
+                max_val = model->histogram[i];
+            }
+        }
+        
+        // Draw histogram bars
+        int bar_width = 7;
+        int bar_spacing = 1;
+        int max_height = 30;  // Reduced height to make room for header
+        int base_y = 55;
+        
+        for(int i = 0; i < 16; i++) {
+            int bar_height = (model->histogram[i] * max_height) / max_val;
+            if(bar_height > 0) {
+                int x = 2 + i * (bar_width + bar_spacing);
+                // Draw bar
+                canvas_draw_box(canvas, x, base_y - bar_height, bar_width, bar_height);
+            }
+        }
+        
+        // Draw axis
+        canvas_draw_line(canvas, 0, base_y + 1, 127, base_y + 1);
+        
+        // Labels for bins
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 63, "0");
+        canvas_draw_str(canvas, 60, 63, "7F");
+        canvas_draw_str(canvas, 115, 63, "FF");
+    } else {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 20, 35, "Start generator");
+        canvas_draw_str(canvas, 20, 45, "to see histogram");
+    }
+}
+
+bool flipper_rng_byte_distribution_input_callback(InputEvent* event, void* context) {
+    UNUSED(context);  // Mark context as unused to avoid compiler warning
+    bool consumed = false;
+    
+    if(event->type == InputTypePress) {
+        switch(event->key) {
+        case InputKeyBack:
+            // Back button handled by previous callback (returns to menu)
+            consumed = true;
+            break;
+        default:
+            break;
+        }
+    }
+    
+    return consumed;
+}
+
+// Source Stats View - Shows real-time entropy contribution from each source
+void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
+    FlipperRngVisualizationModel* model = context;
+    
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 2, 10, "Entropy Sources");
+    
+    if(!model->is_running) {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 20, 35, "Start generator");
+        canvas_draw_str(canvas, 20, 45, "to see source stats");
+        return;
+    }
+    
+    canvas_set_font(canvas, FontSecondary);
+    
+    // Use cached display values from the model
+    // These are only updated when the model itself updates
+    const char* unit = model->show_bits_per_sec ? "bits/s" : "bits";
+    
+    // Calculate total for percentage calculation
+    uint32_t total_bits = model->bits_from_hw_rng + 
+                         model->bits_from_subghz_rssi + 
+                         model->bits_from_infrared;
+    
+    if(total_bits == 0) total_bits = 1; // Avoid division by zero
+    
+    // Y positions and dimensions
+    int y = 18;  // Start position for first source
+    int bar_width = 124;  // Full screen width minus margins
+    int bar_height = 4;   // Slightly taller bars
+    int bar_x = 2;
+    int spacing = 14;  // Space between each source section
+    
+    // Hardware RNG
+    uint32_t hw_percent = (model->bits_from_hw_rng * 100) / total_bits;
+    char buffer[48];
+    snprintf(buffer, sizeof(buffer), "HW RNG: %lu %s", model->hw_display_value, unit);
+    canvas_draw_str(canvas, 2, y, buffer);
+    
+    // Draw progress bar below text
+    int bar_y = y + 1;
+    canvas_draw_frame(canvas, bar_x, bar_y, bar_width, bar_height);
+    int fill_width = (bar_width - 2) * hw_percent / 100;
+    if(fill_width > 0 && fill_width < bar_width - 2) {
+        canvas_draw_box(canvas, bar_x + 1, bar_y + 1, fill_width, bar_height - 2);
+    }
+    
+    y += spacing;
+    
+    // SubGHz RSSI
+    uint32_t rf_percent = (model->bits_from_subghz_rssi * 100) / total_bits;
+    snprintf(buffer, sizeof(buffer), "SubGHz: %lu %s", model->rf_display_value, unit);
+    canvas_draw_str(canvas, 2, y, buffer);
+    
+    bar_y = y + 1;
+    canvas_draw_frame(canvas, bar_x, bar_y, bar_width, bar_height);
+    fill_width = (bar_width - 2) * rf_percent / 100;
+    if(fill_width > 0 && fill_width < bar_width - 2) {
+        canvas_draw_box(canvas, bar_x + 1, bar_y + 1, fill_width, bar_height - 2);
+    }
+    
+    y += spacing;
+    
+    // Infrared
+    uint32_t ir_percent = (model->bits_from_infrared * 100) / total_bits;
+    snprintf(buffer, sizeof(buffer), "Infrared: %lu %s", model->ir_display_value, unit);
+    canvas_draw_str(canvas, 2, y, buffer);
+    
+    bar_y = y + 1;
+    canvas_draw_frame(canvas, bar_x, bar_y, bar_width, bar_height);
+    fill_width = (bar_width - 2) * ir_percent / 100;
+    if(fill_width > 0 && fill_width < bar_width - 2) {
+        canvas_draw_box(canvas, bar_x + 1, bar_y + 1, fill_width, bar_height - 2);
+    }
+}
+
+bool flipper_rng_source_stats_input_callback(InputEvent* event, void* context) {
+    FlipperRngApp* app = context;
+    bool consumed = false;
+    
+    if(event->type == InputTypePress && event->key == InputKeyOk) {
+        with_view_model(
+            app->source_stats_view,
+            FlipperRngVisualizationModel* model,
+            {
+                // Toggle between total bits and bits/sec display
+                model->show_bits_per_sec = !model->show_bits_per_sec;
+                
+                // Recalculate display values for the new mode
+                if(model->show_bits_per_sec && model->is_running) {
+                    uint32_t elapsed_ms = furi_get_tick() - model->start_time_ms;
+                    float elapsed_sec = elapsed_ms / 1000.0f;
+                    if(elapsed_sec < 0.1f) elapsed_sec = 0.1f;
+                    
+                    model->hw_display_value = (uint32_t)(model->bits_from_hw_rng / elapsed_sec);
+                    model->rf_display_value = (uint32_t)(model->bits_from_subghz_rssi / elapsed_sec);
+                    model->ir_display_value = (uint32_t)(model->bits_from_infrared / elapsed_sec);
+                } else {
+                    model->hw_display_value = model->bits_from_hw_rng;
+                    model->rf_display_value = model->bits_from_subghz_rssi;
+                    model->ir_display_value = model->bits_from_infrared;
+                }
+            },
+            true);
+        consumed = true;
+    }
+    
+    return consumed;
 }

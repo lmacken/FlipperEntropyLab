@@ -14,6 +14,17 @@ typedef struct {
     uint8_t walk_x;
     uint8_t walk_y;
     uint32_t histogram[16];  // Histogram data for 16 bins
+    // Per-source bit counters for stats view
+    uint32_t bits_from_hw_rng;
+    uint32_t bits_from_subghz_rssi;
+    uint32_t bits_from_infrared;
+    // For bits/sec calculation
+    bool show_bits_per_sec;  // Toggle between total bits and bits/sec
+    uint32_t start_time_ms;   // When generation started
+    // Cached display values (updated only when model updates)
+    uint32_t hw_display_value;
+    uint32_t rf_display_value;
+    uint32_t ir_display_value;
 } FlipperRngVisualizationModel;
 
 // Test model
@@ -48,6 +59,8 @@ void flipper_rng_output_mode_changed(VariableItem* item);
 // Poll interval callback
 void flipper_rng_poll_interval_changed(VariableItem* item);
 
+// External entropy callback
+
 // Visualization callbacks are declared in flipper_rng.h
 void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t length);
 
@@ -55,3 +68,11 @@ void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t 
 void flipper_rng_test_draw_callback(Canvas* canvas, void* context);
 bool flipper_rng_test_input_callback(InputEvent* event, void* context);
 void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t length);
+
+// Byte distribution view callbacks
+void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context);
+bool flipper_rng_byte_distribution_input_callback(InputEvent* event, void* context);
+
+// Source stats view callbacks
+void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context);
+bool flipper_rng_source_stats_input_callback(InputEvent* event, void* context);
