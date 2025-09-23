@@ -44,6 +44,7 @@ uint32_t flipper_rng_get_infrared_noise(void);
 void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t bits);
 void flipper_rng_mix_entropy_pool(FlipperRngState* state);
 uint8_t flipper_rng_extract_random_byte(FlipperRngState* state);
+void flipper_rng_extract_random_bytes(FlipperRngState* state, uint8_t* buffer, size_t count);
 
 // Von Neumann debiasing
 void von_neumann_init(VonNeumannExtractor* extractor);

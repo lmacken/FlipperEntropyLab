@@ -64,8 +64,8 @@ int32_t flipper_rng_worker_thread(void* context) {
         }
         
         // SubGHz RSSI - ENHANCED HIGH QUALITY RF noise (16 bits per sample)
-        // Sample every 3 iterations - improved implementation is more efficient
-        if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 3 == 0)) {
+        // Sample less frequently to avoid blocking (every 50 iterations = 50ms at 1ms poll)
+        if((app->state->entropy_sources & EntropySourceSubGhzRSSI) && (counter % 50 == 0)) {
             // Pass state to allow early exit on stop
             flipper_rng_collect_subghz_rssi_entropy(app->state);
             // Only count bits if we're still running
@@ -79,30 +79,37 @@ int32_t flipper_rng_worker_thread(void* context) {
         // No need to poll here anymore - entropy is added continuously
         
         
-        // Mix the entropy pool periodically
+        // Mix the entropy pool periodically - less frequent with better mixing
         mix_counter++;
-        if(mix_counter >= 32) {
+        if(mix_counter >= 64) {  // Increased from 32 since mixing is more efficient now
             flipper_rng_mix_entropy_pool(app->state);
             mix_counter = 0;
         }
         
-        // Extract mixed bytes from the pool
+        // Extract mixed bytes from the pool - OPTIMIZED BATCH EXTRACTION
         // Generate more bytes per iteration for better throughput
-        int bytes_to_generate = 16; // Generate 16 bytes per iteration
-        for(int i = 0; i < bytes_to_generate && buffer_pos < OUTPUT_BUFFER_SIZE; i++) {
-            uint8_t random_byte = flipper_rng_extract_random_byte(app->state);
-            output_buffer[buffer_pos++] = random_byte;
-            app->state->bytes_generated++;
+        int bytes_to_generate = 32; // Increased from 16 to 32 for better throughput
+        int bytes_available = OUTPUT_BUFFER_SIZE - buffer_pos;
+        int bytes_to_extract = (bytes_to_generate < bytes_available) ? bytes_to_generate : bytes_available;
+        
+        if(bytes_to_extract > 0) {
+            // Batch extract all bytes in one call - MUCH faster
+            flipper_rng_extract_random_bytes(app->state, &output_buffer[buffer_pos], bytes_to_extract);
             
-            // Update histogram (16 bins, so divide byte value by 16)
-            app->state->byte_histogram[random_byte >> 4]++;
+            // Update histogram for the extracted bytes
+            for(int i = 0; i < bytes_to_extract; i++) {
+                app->state->byte_histogram[output_buffer[buffer_pos + i] >> 4]++;
+            }
+            
+            buffer_pos += bytes_to_extract;
         }
         
-        // Output data when we have some (more frequent for UART)
+        // Output data when we have some - OPTIMIZED BUFFER SIZES
         bool should_output = false;
         if(app->state->output_mode == OutputModeUART) {
-            // For UART, send smaller chunks more frequently (every 32 bytes)
-            should_output = (buffer_pos >= 32);
+            // For UART, send larger chunks less frequently (every 128 bytes)
+            // This reduces overhead while maintaining good latency
+            should_output = (buffer_pos >= 128);
         } else {
             // For USB and File modes, wait for full buffer
             should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
@@ -201,14 +208,21 @@ int32_t flipper_rng_worker_thread(void* context) {
         
         counter++;
         
-        // Delay with quick exit check, respecting poll interval
+        // Optimized delay - can run with 0ms delay for maximum throughput
         uint32_t delay_ms = app->state->poll_interval_ms;
-        // Break delay into small chunks for responsive stopping
-        uint32_t chunks = (delay_ms > 10) ? (delay_ms / 10) : 1;
-        uint32_t chunk_delay = delay_ms / chunks;
         
-        for(uint32_t i = 0; i < chunks && app->state->is_running; i++) {
-            furi_delay_ms(chunk_delay);
+        if(delay_ms > 0) {
+            // Break delay into small chunks for responsive stopping
+            uint32_t chunks = (delay_ms > 10) ? (delay_ms / 10) : 1;
+            uint32_t chunk_delay = delay_ms / chunks;
+            
+            for(uint32_t i = 0; i < chunks && app->state->is_running; i++) {
+                furi_delay_ms(chunk_delay);
+            }
+        } else {
+            // With 0ms delay, just yield to scheduler for other threads
+            // This prevents hogging CPU while allowing maximum throughput
+            furi_delay_tick(1);
         }
     }
     

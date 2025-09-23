@@ -131,62 +131,89 @@ void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t b
     furi_mutex_release(state->mutex);
 }
 
-// Mix entropy pool using LFSR-based mixing
+// Mix entropy pool - OPTIMIZED using hardware RNG
 void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
     furi_mutex_acquire(state->mutex, FuriWaitForever);
     
-    uint32_t lfsr = 0xACE1u;
+    // Use hardware RNG for fast, high-quality mixing
+    // Process 32 bits at a time for better performance
+    uint32_t* pool32 = (uint32_t*)state->entropy_pool;
+    size_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
     
-    for(int round = 0; round < 4; round++) {
-        for(size_t i = 0; i < RNG_POOL_SIZE; i++) {
-            // LFSR step
-            uint32_t bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1;
-            lfsr = (lfsr >> 1) | (bit << 15);
-            
-            // Mix with pool
-            state->entropy_pool[i] ^= (lfsr & 0xFF);
-            
-            // Diffusion step
-            if(i > 0) {
-                state->entropy_pool[i] ^= state->entropy_pool[i - 1];
-            }
-            if(i < RNG_POOL_SIZE - 1) {
-                state->entropy_pool[i] ^= state->entropy_pool[i + 1] >> 1;
-            }
+    // Get fresh hardware random for mixing
+    uint32_t hw_mix = furi_hal_random_get();
+    uint32_t hw_mix2 = furi_hal_random_get();
+    
+    // Fast mixing using hardware random and rotation
+    for(size_t i = 0; i < pool32_size; i++) {
+        // Mix with hardware random
+        pool32[i] ^= hw_mix;
+        
+        // Rotate the mixing value for next iteration
+        hw_mix = (hw_mix << 1) | (hw_mix >> 31);
+        hw_mix ^= hw_mix2;
+        hw_mix2 = (hw_mix2 >> 1) | (hw_mix2 << 31);
+        
+        // Additional diffusion with adjacent values
+        if(i > 0) {
+            pool32[i] ^= pool32[i - 1] >> 3;
         }
+        if(i < pool32_size - 1) {
+            pool32[i] ^= pool32[i + 1] << 5;
+        }
+    }
+    
+    // Final pass with byte-level diffusion for thorough mixing
+    for(size_t i = 1; i < RNG_POOL_SIZE - 1; i++) {
+        state->entropy_pool[i] ^= (state->entropy_pool[i - 1] >> 1) ^ (state->entropy_pool[i + 1] << 1);
     }
     
     furi_mutex_release(state->mutex);
 }
 
-// Extract a random byte from the pool
+// Extract a random byte from the pool (legacy single-byte version)
 uint8_t flipper_rng_extract_random_byte(FlipperRngState* state) {
+    uint8_t result;
+    flipper_rng_extract_random_bytes(state, &result, 1);
+    return result;
+}
+
+// Batch extract multiple random bytes from the pool - OPTIMIZED
+void flipper_rng_extract_random_bytes(FlipperRngState* state, uint8_t* buffer, size_t count) {
+    if(!buffer || count == 0) return;
+    
     furi_mutex_acquire(state->mutex, FuriWaitForever);
     
-    // Simple extraction: XOR multiple pool positions
-    uint8_t result = 0;
-    size_t positions[8] = {
-        state->entropy_pool_pos,
-        (state->entropy_pool_pos + 511) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 1023) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 1531) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 2047) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 2557) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 3067) % RNG_POOL_SIZE,
-        (state->entropy_pool_pos + 3583) % RNG_POOL_SIZE,
+    // Prime offsets for good distribution across the pool
+    const size_t prime_offsets[8] = {
+        511, 1023, 1531, 2047, 2557, 3067, 3583, 4093
     };
     
-    for(int i = 0; i < 8; i++) {
-        result ^= state->entropy_pool[positions[i]];
+    // Extract all bytes in a single critical section
+    for(size_t byte_idx = 0; byte_idx < count; byte_idx++) {
+        uint8_t result = 0;
+        size_t base_pos = state->entropy_pool_pos;
+        
+        // Mix bytes from 8 different pool positions
+        // Unrolled for better performance
+        result ^= state->entropy_pool[base_pos];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[0]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[1]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[2]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[3]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[4]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[5]) % RNG_POOL_SIZE];
+        result ^= state->entropy_pool[(base_pos + prime_offsets[6]) % RNG_POOL_SIZE];
+        
+        buffer[byte_idx] = result;
+        
+        // Advance position for next byte
+        state->entropy_pool_pos = (state->entropy_pool_pos + 1) % RNG_POOL_SIZE;
     }
     
-    // Advance position
-    state->entropy_pool_pos = (state->entropy_pool_pos + 1) % RNG_POOL_SIZE;
-    state->bytes_generated++;
+    state->bytes_generated += count;
     
     furi_mutex_release(state->mutex);
-    
-    return result;
 }
 
 // Von Neumann debiasing implementation
