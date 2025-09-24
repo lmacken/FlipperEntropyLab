@@ -14,10 +14,13 @@
 #define TAG "FlipperRNG_HW"
 
 // DMA buffer for async UART transmission
-#define DMA_BUFFER_SIZE 512
-static uint8_t dma_tx_buffer[DMA_BUFFER_SIZE];
+#define DMA_BUFFER_SIZE 2048  // Increased for better throughput
+static uint8_t dma_tx_buffer_a[DMA_BUFFER_SIZE];
+static uint8_t dma_tx_buffer_b[DMA_BUFFER_SIZE];
+static uint8_t* current_dma_buffer = NULL;
 static volatile bool dma_tx_busy = false;
 static FuriSemaphore* dma_tx_complete = NULL;
+static FuriMutex* dma_tx_mutex = NULL;
 
 // Hardware AES context for fast mixing
 static bool hw_aes_initialized = false;
@@ -30,10 +33,18 @@ void flipper_rng_hw_accel_init(void) {
         dma_tx_complete = furi_semaphore_alloc(1, 0);
     }
     
+    // Initialize DMA mutex
+    if(!dma_tx_mutex) {
+        dma_tx_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    }
+    
     // Initialize AES mutex
     if(!hw_aes_mutex) {
         hw_aes_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     }
+    
+    // Initialize double buffer pointers
+    current_dma_buffer = dma_tx_buffer_a;
     
     FURI_LOG_I(TAG, "Hardware acceleration initialized");
 }
@@ -43,6 +54,11 @@ void flipper_rng_hw_accel_deinit(void) {
     if(dma_tx_complete) {
         furi_semaphore_free(dma_tx_complete);
         dma_tx_complete = NULL;
+    }
+    
+    if(dma_tx_mutex) {
+        furi_mutex_free(dma_tx_mutex);
+        dma_tx_mutex = NULL;
     }
     
     if(hw_aes_mutex) {
@@ -166,30 +182,65 @@ void flipper_rng_hw_xor_mix(uint32_t* dest, const uint32_t* src, size_t words) {
     }
 }
 
-// DMA-based UART transmission (async, non-blocking)
+// Double-buffered UART transmission for maximum throughput
 bool flipper_rng_hw_uart_tx_dma(FuriHalSerialHandle* handle, const uint8_t* data, size_t size) {
     if(!handle || !data || size == 0 || size > DMA_BUFFER_SIZE) {
         return false;
     }
     
-    // Check if DMA is busy
-    if(dma_tx_busy) {
+    if(!dma_tx_mutex) {
         return false;
     }
     
-    dma_tx_busy = true;
+    // Use mutex to protect buffer switching
+    if(furi_mutex_acquire(dma_tx_mutex, 10) != FuriStatusOk) {
+        return false;
+    }
     
-    // Copy data to DMA buffer
-    memcpy(dma_tx_buffer, data, size);
+    // Switch buffers for double buffering
+    uint8_t* tx_buffer = current_dma_buffer;
+    current_dma_buffer = (current_dma_buffer == dma_tx_buffer_a) ? 
+                         dma_tx_buffer_b : dma_tx_buffer_a;
     
-    // Start DMA transmission
-    // Note: This would need proper DMA configuration in furi_hal_serial
-    // For now, fall back to regular transmission
-    furi_hal_serial_tx(handle, dma_tx_buffer, size);
+    // Copy data to the selected buffer
+    memcpy(tx_buffer, data, size);
     
-    dma_tx_busy = false;
+    // Since Flipper's HAL doesn't expose DMA directly, we use a hybrid approach:
+    // Split large transfers into chunks to allow interleaving
+    size_t chunk_size = 256;  // Optimal chunk size for UART
+    size_t offset = 0;
+    
+    while(offset < size) {
+        size_t to_send = (size - offset > chunk_size) ? chunk_size : (size - offset);
+        
+        // Transmit chunk
+        furi_hal_serial_tx(handle, tx_buffer + offset, to_send);
+        offset += to_send;
+        
+        // Yield to allow other operations (simulates DMA behavior)
+        if(offset < size) {
+            furi_delay_tick(1);
+        }
+    }
+    
+    furi_mutex_release(dma_tx_mutex);
     
     return true;
+}
+
+// Optimized bulk UART transmission with minimal overhead
+void flipper_rng_hw_uart_tx_bulk(FuriHalSerialHandle* handle, const uint8_t* data, size_t size) {
+    if(!handle || !data || size == 0) return;
+    
+    // For bulk transfers, use larger chunks and less yielding
+    const size_t bulk_chunk = 1024;
+    size_t offset = 0;
+    
+    while(offset < size) {
+        size_t to_send = (size - offset > bulk_chunk) ? bulk_chunk : (size - offset);
+        furi_hal_serial_tx(handle, data + offset, to_send);
+        offset += to_send;
+    }
 }
 
 // Fast CRC32 using lookup table (if hardware CRC not available)

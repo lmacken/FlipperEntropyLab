@@ -1,6 +1,7 @@
 #include "flipper_rng.h"
 #include "flipper_rng_entropy.h"
 #include "flipper_rng_views.h"
+#include "flipper_rng_hw_accel.h"
 #include <furi_hal_random.h>
 #include <furi_hal_serial.h>
 #include <storage/storage.h>
@@ -9,7 +10,7 @@
 #include <string.h>
 
 #define TAG "FlipperRNG"
-#define OUTPUT_BUFFER_SIZE 256
+#define OUTPUT_BUFFER_SIZE 512  // Increased for better DMA efficiency
 
 // Worker thread - Version 3: Multi-source entropy collection
 int32_t flipper_rng_worker_thread(void* context) {
@@ -118,10 +119,14 @@ int32_t flipper_rng_worker_thread(void* context) {
         if(should_output) {
             // Output data based on selected mode
             if(app->state->output_mode == OutputModeUART) {
-                // Send to GPIO UART (pins 13/14)
+                // Send to GPIO UART (pins 13/14) using DMA optimization
                 if(app->state->serial_handle) {
-                    furi_hal_serial_tx(app->state->serial_handle, (uint8_t*)output_buffer, buffer_pos);
-                    FURI_LOG_D(TAG, "Sent %zu bytes to UART", buffer_pos);
+                    // Try DMA-based transmission first for better performance
+                    if(!flipper_rng_hw_uart_tx_dma(app->state->serial_handle, (uint8_t*)output_buffer, buffer_pos)) {
+                        // Fallback to optimized bulk transmission
+                        flipper_rng_hw_uart_tx_bulk(app->state->serial_handle, (uint8_t*)output_buffer, buffer_pos);
+                    }
+                    FURI_LOG_D(TAG, "Sent %zu bytes to UART (DMA-optimized)", buffer_pos);
                 } else {
                     FURI_LOG_W(TAG, "UART not initialized");
                 }

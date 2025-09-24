@@ -23,6 +23,7 @@ void flipper_rng_hw_xor_mix(uint32_t* dest, const uint32_t* src, size_t words);
 
 // DMA-based UART transmission
 bool flipper_rng_hw_uart_tx_dma(FuriHalSerialHandle* handle, const uint8_t* data, size_t size);
+void flipper_rng_hw_uart_tx_bulk(FuriHalSerialHandle* handle, const uint8_t* data, size_t size);
 
 // Fast CRC32
 uint32_t flipper_rng_hw_crc32(const uint8_t* data, size_t size);
