@@ -3,6 +3,7 @@
 #include "flipper_rng_views.h"
 #include "flipper_rng_about.h"
 #include "flipper_rng_splash.h"
+#include "flipper_rng_hw_accel.h"
 #include <furi_hal_random.h>
 #include <furi_hal_adc.h>
 #include <furi_hal_power.h>
@@ -338,6 +339,9 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->is_running = false;
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
+    
+    // Initialize hardware acceleration
+    flipper_rng_hw_accel_init();
     app->state->samples_collected = 0;
     app->state->bits_from_hw_rng = 0;
     app->state->bits_from_subghz_rssi = 0;
@@ -495,6 +499,9 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     
     // Stop and free IR worker if it exists
     flipper_rng_stop_ir_worker(app);
+    
+    // Deinitialize hardware acceleration
+    flipper_rng_hw_accel_deinit();
     
     // Turn off all LEDs before exiting
     flipper_rng_set_led_off(app);

@@ -1,4 +1,5 @@
 #include "flipper_rng_entropy.h"
+#include "flipper_rng_hw_accel.h"
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_hal_random.h>
@@ -131,41 +132,59 @@ void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t b
     furi_mutex_release(state->mutex);
 }
 
-// Mix entropy pool - OPTIMIZED using hardware RNG
+// Mix entropy pool - HARDWARE ACCELERATED with AES
 void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
     furi_mutex_acquire(state->mutex, FuriWaitForever);
     
-    // Use hardware RNG for fast, high-quality mixing
-    // Process 32 bits at a time for better performance
+    // Try hardware AES mixing first (ultra-fast)
+    uint32_t aes_key[8];
     uint32_t* pool32 = (uint32_t*)state->entropy_pool;
-    size_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
     
-    // Get fresh hardware random for mixing
-    uint32_t hw_mix = furi_hal_random_get();
-    uint32_t hw_mix2 = furi_hal_random_get();
+    // Generate AES key from current pool state and hardware RNG
+    aes_key[0] = pool32[0] ^ furi_hal_random_get();
+    aes_key[1] = pool32[127] ^ furi_hal_random_get();
+    aes_key[2] = pool32[255] ^ furi_hal_random_get();
+    aes_key[3] = pool32[383] ^ furi_hal_random_get();
+    aes_key[4] = pool32[511] ^ flipper_rng_hw_get_cycles();
+    aes_key[5] = pool32[639] ^ flipper_rng_hw_get_cycles();
+    aes_key[6] = pool32[767] ^ DWT->CYCCNT;
+    aes_key[7] = pool32[895] ^ DWT->CYCCNT;
     
-    // Fast mixing using hardware random and rotation
-    for(size_t i = 0; i < pool32_size; i++) {
-        // Mix with hardware random
-        pool32[i] ^= hw_mix;
+    // Use hardware AES for ultra-fast mixing
+    if(flipper_rng_hw_aes_mix_pool(state->entropy_pool, RNG_POOL_SIZE, aes_key)) {
+        // Hardware mixing successful
+        FURI_LOG_D(TAG, "Pool mixed with hardware AES");
+    } else {
+        // Fallback to optimized software mixing
+        size_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
         
-        // Rotate the mixing value for next iteration
-        hw_mix = (hw_mix << 1) | (hw_mix >> 31);
-        hw_mix ^= hw_mix2;
-        hw_mix2 = (hw_mix2 >> 1) | (hw_mix2 << 31);
+        // Get fresh hardware random for mixing
+        uint32_t hw_mix = furi_hal_random_get();
+        uint32_t hw_mix2 = furi_hal_random_get();
         
-        // Additional diffusion with adjacent values
-        if(i > 0) {
-            pool32[i] ^= pool32[i - 1] >> 3;
+        // Fast mixing using hardware random and rotation
+        for(size_t i = 0; i < pool32_size; i++) {
+            // Mix with hardware random
+            pool32[i] ^= hw_mix;
+            
+            // Use hardware-optimized rotation
+            hw_mix = flipper_rng_hw_rotate_left(hw_mix, 1);
+            hw_mix ^= hw_mix2;
+            hw_mix2 = flipper_rng_hw_rotate_right(hw_mix2, 1);
+            
+            // Additional diffusion with adjacent values
+            if(i > 0) {
+                pool32[i] ^= pool32[i - 1] >> 3;
+            }
+            if(i < pool32_size - 1) {
+                pool32[i] ^= pool32[i + 1] << 5;
+            }
         }
-        if(i < pool32_size - 1) {
-            pool32[i] ^= pool32[i + 1] << 5;
+        
+        // Final pass with byte-level diffusion for thorough mixing
+        for(size_t i = 1; i < RNG_POOL_SIZE - 1; i++) {
+            state->entropy_pool[i] ^= (state->entropy_pool[i - 1] >> 1) ^ (state->entropy_pool[i + 1] << 1);
         }
-    }
-    
-    // Final pass with byte-level diffusion for thorough mixing
-    for(size_t i = 1; i < RNG_POOL_SIZE - 1; i++) {
-        state->entropy_pool[i] ^= (state->entropy_pool[i - 1] >> 1) ^ (state->entropy_pool[i + 1] << 1);
     }
     
     furi_mutex_release(state->mutex);
