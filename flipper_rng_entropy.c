@@ -260,12 +260,26 @@ void flipper_rng_collect_hardware_rng(FlipperRngState* state) {
 // ADC, battery, and temperature sources removed - too predictable
 // Now focusing only on high-quality sources: HW RNG, SubGHz RSSI, Infrared
 
+// Static mutex for SubGHz access protection
+static FuriMutex* subghz_mutex = NULL;
+
 // Get SubGHz RSSI noise - Enhanced hardware implementation with improved entropy
 uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     uint32_t entropy = 0;
     
     // Early exit if we're stopping
     if(state && !state->is_running) {
+        return 0;
+    }
+    
+    // Create mutex on first use
+    if(!subghz_mutex) {
+        subghz_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    }
+    
+    // Try to acquire SubGHz access (with timeout to prevent deadlock)
+    if(furi_mutex_acquire(subghz_mutex, 100) != FuriStatusOk) {
+        FURI_LOG_W(TAG, "SubGHz RSSI: Could not acquire mutex, skipping");
         return 0;
     }
     
@@ -322,7 +336,12 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     // Try to prepare SubGHz for RX
     bool subghz_available = false;
     
-    // Don't reset every time - just ensure idle state
+    // Check if SubGHz is already in use by trying to acquire it
+    // We'll use the frequency test as our availability check instead
+    
+    // Ensure we're in a clean state
+    furi_hal_subghz_sleep();
+    furi_delay_ms(1);
     furi_hal_subghz_idle();
     
     // Load optimized preset for entropy collection
@@ -336,6 +355,8 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
         {CC1101_AGCCTRL2, 0xC0}, // MAX LNA+LNA2, MAIN_TARGET 24 dB
         {0, 0}
     };
+    
+    // Load registers (void function, no return value to check)
     furi_hal_subghz_load_registers(agc_settings[0]);
     
     // Put in idle state after configuration
@@ -348,6 +369,10 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
         FURI_LOG_D(TAG, "SubGHz RSSI: Hardware ready at %lu Hz", test_freq);
     } else {
         FURI_LOG_W(TAG, "SubGHz RSSI: Hardware not responding, using timing entropy");
+        // Clean up if initialization failed
+        furi_hal_subghz_sleep();
+        furi_mutex_release(subghz_mutex);
+        return 0;
     }
     
     // Calculate number of frequencies
@@ -370,6 +395,8 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     
     if(valid_count == 0) {
         FURI_LOG_W(TAG, "SubGHz: No frequencies valid in this region, using timing entropy");
+        furi_hal_subghz_sleep();
+        furi_mutex_release(subghz_mutex);
         return DWT->CYCCNT ^ (DWT->CYCCNT << 16);
     }
     
@@ -432,7 +459,7 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
                 continue;
             }
             
-            // Configure and start RX
+            // Configure and start RX with error checking
             uint32_t actual_freq = furi_hal_subghz_set_frequency(frequency);
             
             if(actual_freq > 0) {
@@ -551,6 +578,9 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     
     FURI_LOG_I(TAG, "SubGHz RSSI: Collected %u bytes entropy=0x%08lX (HW:%s, Valid:%zu, Sampled:%u)", 
               byte_idx, entropy, subghz_available ? "Yes" : "No", valid_count, samples_to_take);
+    
+    // Release mutex before returning
+    furi_mutex_release(subghz_mutex);
     
     return entropy;
 }
