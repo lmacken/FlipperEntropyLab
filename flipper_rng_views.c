@@ -603,10 +603,21 @@ bool flipper_rng_test_input_callback(InputEvent* event, void* context) {
                 app->state->test_buffer = NULL;
             }
             
+            // Safer memory allocation with size limits
+            if(test_size > 131072) {  // Limit to 128KB max to prevent memory issues
+                FURI_LOG_E(TAG, "Test size %zu too large, limiting to 128KB", test_size);
+                test_size = 131072;
+            }
+            
             app->state->test_buffer = malloc(test_size);
             if(!app->state->test_buffer) {
                 FURI_LOG_E(TAG, "Failed to allocate test buffer of size %zu", test_size);
-                FURI_LOG_E(TAG, "Insufficient memory for test. Try smaller test size.");
+                FURI_LOG_E(TAG, "Insufficient memory for test. Try smaller test size or restart app.");
+                
+                // Reset test state on allocation failure
+                app->state->test_running = false;
+                app->state->test_buffer_size = 0;
+                app->state->test_buffer_pos = 0;
                 
                 // Update UI to show error
                 with_view_model(
@@ -617,40 +628,106 @@ bool flipper_rng_test_input_callback(InputEvent* event, void* context) {
                         model->test_complete = false;
                         model->bytes_collected = 0;
                         model->test_progress = 0.0f;
+                        snprintf(model->result_text, sizeof(model->result_text), "Memory allocation failed");
                     },
                     true
                 );
                 return false;
             }
             
+            // Clear the buffer to prevent reading uninitialized memory
+            memset(app->state->test_buffer, 0, test_size);
+            
             app->state->test_buffer_size = test_size;
             app->state->test_buffer_pos = 0;
             app->state->test_running = true;
             
-            // Track if we need to start the worker for the test
-            static bool test_started_worker = false;
-            test_started_worker = false;
-            
-            // Start the worker if not running
-            if(!app->state->is_running) {
-                FURI_LOG_I(TAG, "Starting worker thread for test");
-                app->state->is_running = true;
-                test_started_worker = true;
-                if(furi_thread_get_state(app->worker_thread) == FuriThreadStateStopped) {
-                    furi_thread_start(app->worker_thread);
-                }
-            } else {
-                FURI_LOG_I(TAG, "Using existing worker thread for test");
-            }
-            
-            // Store whether we started the worker (for cleanup later)
-            app->state->test_started_worker = test_started_worker;
+            // Test will use the main generator thread which should already be running
+            // If not running, the test view's enter callback will start it
+            FURI_LOG_I(TAG, "Test configured, generator should be running for entropy collection");
             
             consumed = true;
         }
     }
     
     return consumed;
+}
+
+// Test view enter callback - auto-start generator for realistic testing
+void flipper_rng_test_enter_callback(void* context) {
+    FlipperRngApp* app = context;
+    
+    FURI_LOG_I(TAG, "Entering Test Quality view");
+    
+    // Auto-start the main generator if not already running
+    // This ensures test uses real entropy collection conditions
+    if(!app->state->is_running) {
+        FURI_LOG_I(TAG, "Auto-starting generator for Test Quality...");
+        
+        // Use the same logic as the main "Start Generator" button
+        // Ensure worker thread is stopped first
+        if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
+            FURI_LOG_I(TAG, "Waiting for worker thread to stop...");
+            app->state->is_running = false;
+            furi_thread_join(app->worker_thread);
+        }
+        
+        // Initialize UART if needed (for consistency with main generator)
+        if(app->state->output_mode == OutputModeUART && !app->state->serial_handle) {
+            app->state->serial_handle = furi_hal_serial_control_acquire(FuriHalSerialIdUsart);
+            if(app->state->serial_handle) {
+                furi_hal_serial_init(app->state->serial_handle, 115200);
+                FURI_LOG_I(TAG, "UART initialized for test");
+            }
+        }
+        
+        // Reset counters for fresh start
+        app->state->bytes_generated = 0;
+        app->state->samples_collected = 0;
+        app->state->bits_from_hw_rng = 0;
+        app->state->bits_from_subghz_rssi = 0;
+        app->state->bits_from_infrared = 0;
+        memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
+        
+        // Start the main generator worker thread
+        app->state->is_running = true;
+        furi_thread_start(app->worker_thread);
+        
+        FURI_LOG_I(TAG, "Generator auto-started for Test Quality");
+    } else {
+        FURI_LOG_I(TAG, "Generator already running for Test Quality");
+    }
+}
+
+// Test view exit callback - stop generator if we started it
+void flipper_rng_test_exit_callback(void* context) {
+    FlipperRngApp* app = context;
+    
+    FURI_LOG_I(TAG, "Exiting Test Quality view");
+    
+    // Stop any running test
+    app->state->test_running = false;
+    
+    // Clean up test buffer
+    if(app->state->test_buffer) {
+        free(app->state->test_buffer);
+        app->state->test_buffer = NULL;
+        app->state->test_buffer_size = 0;
+        app->state->test_buffer_pos = 0;
+    }
+    
+    // Stop the generator (it will be auto-started by other views if needed)
+    if(app->state->is_running) {
+        FURI_LOG_I(TAG, "Auto-stopping generator after Test Quality");
+        app->state->is_running = false;
+        
+        // Clean up UART if we initialized it
+        if(app->state->serial_handle) {
+            furi_hal_serial_deinit(app->state->serial_handle);
+            furi_hal_serial_control_release(app->state->serial_handle);
+            app->state->serial_handle = NULL;
+        }
+    }
 }
 
 void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t length) {

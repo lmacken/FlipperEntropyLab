@@ -67,6 +67,8 @@ void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t 
 // Test view callbacks
 void flipper_rng_test_draw_callback(Canvas* canvas, void* context);
 bool flipper_rng_test_input_callback(InputEvent* event, void* context);
+void flipper_rng_test_enter_callback(void* context);
+void flipper_rng_test_exit_callback(void* context);
 void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t length);
 
 // Byte distribution view callbacks

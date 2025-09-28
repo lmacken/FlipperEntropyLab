@@ -459,6 +459,8 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_allocate_model(app->test_view, ViewModelTypeLocking, sizeof(FlipperRngTestModel));
     view_set_draw_callback(app->test_view, flipper_rng_test_draw_callback);
     view_set_input_callback(app->test_view, flipper_rng_test_input_callback);
+    view_set_enter_callback(app->test_view, flipper_rng_test_enter_callback);
+    view_set_exit_callback(app->test_view, flipper_rng_test_exit_callback);
     view_set_previous_callback(app->test_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewTest, app->test_view);
     
@@ -480,7 +482,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     // Create worker thread
     app->worker_thread = furi_thread_alloc();
     furi_thread_set_name(app->worker_thread, "FlipperRngWorker");
-    furi_thread_set_stack_size(app->worker_thread, 2048);
+    furi_thread_set_stack_size(app->worker_thread, 4096);  // Increased from 2048 to prevent stack overflow
     furi_thread_set_callback(app->worker_thread, flipper_rng_worker_thread);
     furi_thread_set_context(app->worker_thread, app);
     
