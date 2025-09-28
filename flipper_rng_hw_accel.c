@@ -22,8 +22,12 @@ static volatile bool dma_tx_busy = false;
 static FuriSemaphore* dma_tx_complete = NULL;
 static FuriMutex* dma_tx_mutex = NULL;
 
+// Forward declarations
+static void flipper_rng_hw_aes_init(void);
+
 // Hardware AES context for fast mixing
 static bool hw_aes_initialized = false;
+static bool hw_aes_peripheral_ready = false;
 static FuriMutex* hw_aes_mutex = NULL;
 
 // Initialize hardware acceleration
@@ -46,7 +50,38 @@ void flipper_rng_hw_accel_init(void) {
     // Initialize double buffer pointers
     current_dma_buffer = dma_tx_buffer_a;
     
+    // Initialize AES peripheral for mixing
+    flipper_rng_hw_aes_init();
+    
     FURI_LOG_I(TAG, "Hardware acceleration initialized");
+}
+
+// Initialize AES peripheral once for fast mixing
+static void flipper_rng_hw_aes_init(void) {
+    if(hw_aes_peripheral_ready) return;
+    
+    if(!hw_aes_mutex) return;
+    
+    if(furi_mutex_acquire(hw_aes_mutex, 100) != FuriStatusOk) {
+        FURI_LOG_W(TAG, "Could not acquire AES mutex for initialization");
+        return;
+    }
+    
+    // Enable AES1 peripheral
+    furi_hal_bus_enable(FuriHalBusAES1);
+    
+    // Configure AES for ECB mode (simple, fast mixing)
+    CLEAR_BIT(AES1->CR, AES_CR_EN);
+    MODIFY_REG(
+        AES1->CR,
+        AES_CR_DATATYPE | AES_CR_KEYSIZE | AES_CR_CHMOD,
+        AES_CR_DATATYPE_1 | (0x2 << AES_CR_KEYSIZE_Pos) | (0x0 << AES_CR_CHMOD_Pos)  // 256-bit key, ECB mode
+    );
+    
+    hw_aes_peripheral_ready = true;
+    FURI_LOG_I(TAG, "AES peripheral initialized and ready for mixing");
+    
+    furi_mutex_release(hw_aes_mutex);
 }
 
 // Deinitialize hardware acceleration
@@ -66,30 +101,30 @@ void flipper_rng_hw_accel_deinit(void) {
         hw_aes_mutex = NULL;
     }
     
+    // Disable AES peripheral if it was initialized
+    if(hw_aes_peripheral_ready) {
+        CLEAR_BIT(AES1->CR, AES_CR_EN);
+        furi_hal_bus_disable(FuriHalBusAES1);
+        hw_aes_peripheral_ready = false;
+    }
+    
     hw_aes_initialized = false;
 }
 
 // Ultra-fast hardware AES mixing for entropy pool
 bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key) {
-    if(!hw_aes_mutex) return false;
+    if(!hw_aes_mutex || !hw_aes_peripheral_ready) return false;
     
-    // Acquire mutex for AES hardware
-    if(furi_mutex_acquire(hw_aes_mutex, 100) != FuriStatusOk) {
+    // Acquire mutex for AES hardware with short timeout
+    if(furi_mutex_acquire(hw_aes_mutex, 10) != FuriStatusOk) {
+        FURI_LOG_D(TAG, "AES mutex busy, using software mixing");
         return false;
     }
     
-    // Enable AES1 peripheral
-    furi_hal_bus_enable(FuriHalBusAES1);
-    
-    // Configure AES for ECB mode (simple, fast mixing)
+    // AES peripheral is already initialized, just load new key and process
     CLEAR_BIT(AES1->CR, AES_CR_EN);
-    MODIFY_REG(
-        AES1->CR,
-        AES_CR_DATATYPE | AES_CR_KEYSIZE | AES_CR_CHMOD,
-        AES_CR_DATATYPE_1 | (0x2 << AES_CR_KEYSIZE_Pos) | (0x0 << AES_CR_CHMOD_Pos)  // 256-bit key, ECB mode
-    );
     
-    // Load 256-bit key (8 x 32-bit words)
+    // Load 256-bit key (8 x 32-bit words) - this is the only per-mix overhead
     AES1->KEYR7 = key[0];
     AES1->KEYR6 = key[1];
     AES1->KEYR5 = key[2];
@@ -99,7 +134,7 @@ bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key)
     AES1->KEYR1 = key[6] ^ furi_hal_random_get();
     AES1->KEYR0 = key[7] ^ furi_hal_random_get();
     
-    // Enable AES
+    // Enable AES for processing
     SET_BIT(AES1->CR, AES_CR_EN);
     
     // Process pool in 16-byte blocks using hardware AES
@@ -113,13 +148,14 @@ bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key)
         AES1->DINR = __builtin_bswap32(block[2]);
         AES1->DINR = __builtin_bswap32(block[3]);
         
-        // Wait for computation complete
-        uint32_t timeout = 1000;
+        // Wait for computation complete with shorter timeout
+        uint32_t timeout = 100;  // Reduced from 1000 to prevent long delays
         while(!(AES1->SR & AES_SR_CCF) && timeout--) {
-            furi_delay_tick(1);
+            // No delay - just busy wait for faster operation
         }
         
         if(timeout == 0) {
+            FURI_LOG_W(TAG, "AES operation timeout at block %zu", i/16);
             CLEAR_BIT(AES1->CR, AES_CR_EN);
             furi_hal_bus_disable(FuriHalBusAES1);
             furi_mutex_release(hw_aes_mutex);
@@ -136,9 +172,8 @@ bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key)
         SET_BIT(AES1->CR, AES_CR_CCFC);
     }
     
-    // Disable AES
+    // Keep AES peripheral enabled for next use (just disable processing)
     CLEAR_BIT(AES1->CR, AES_CR_EN);
-    furi_hal_bus_disable(FuriHalBusAES1);
     
     furi_mutex_release(hw_aes_mutex);
     

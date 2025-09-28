@@ -30,6 +30,13 @@ typedef enum {
     OutputModeFile,
 } OutputMode;
 
+// Mixing mode for entropy pool
+typedef enum {
+    MixingModeAuto,      // Try hardware AES first, fallback to software
+    MixingModeHardware,  // Force hardware AES only
+    MixingModeSoftware,  // Force software mixing only
+} MixingMode;
+
 // View IDs
 typedef enum {
     FlipperRngViewSplash,            // Splash screen
@@ -50,6 +57,7 @@ typedef struct {
     FuriMutex* mutex;
     uint32_t entropy_sources;
     OutputMode output_mode;
+    MixingMode mixing_mode;
     uint32_t poll_interval_ms;
     uint32_t visual_refresh_ms;  // Configurable visualization refresh rate
     bool is_running;

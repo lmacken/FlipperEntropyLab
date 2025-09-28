@@ -35,6 +35,12 @@ static const char* visual_refresh_names[] = {
     "1s",
 };
 
+static const char* mixing_mode_names[] = {
+    "Auto",
+    "HW AES",
+    "Software",
+};
+
 static const uint32_t visual_refresh_values[] = {
     100, 200, 500, 1000,
 };
@@ -98,6 +104,16 @@ void flipper_rng_visual_refresh_changed(VariableItem* item) {
     
     app->state->visual_refresh_ms = visual_refresh_values[index];
     variable_item_set_current_value_text(item, visual_refresh_names[index]);
+}
+
+void flipper_rng_mixing_mode_changed(VariableItem* item) {
+    FlipperRngApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    
+    app->state->mixing_mode = (MixingMode)index;
+    variable_item_set_current_value_text(item, mixing_mode_names[index]);
+    
+    FURI_LOG_I(TAG, "Mixing mode changed to: %s", mixing_mode_names[index]);
 }
 
 
@@ -171,6 +187,17 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     }
     variable_item_set_current_value_index(item, visual_index);
     variable_item_set_current_value_text(item, visual_refresh_names[visual_index]);
+    
+    // Mixing mode
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Pool Mixing",
+        COUNT_OF(mixing_mode_names),
+        flipper_rng_mixing_mode_changed,
+        app
+    );
+    variable_item_set_current_value_index(item, app->state->mixing_mode);
+    variable_item_set_current_value_text(item, mixing_mode_names[app->state->mixing_mode]);
 }
 
 // Visualization drawing

@@ -150,12 +150,37 @@ void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
     aes_key[6] = pool32[767] ^ DWT->CYCCNT;
     aes_key[7] = pool32[895] ^ DWT->CYCCNT;
     
-    // Use hardware AES for ultra-fast mixing
-    if(flipper_rng_hw_aes_mix_pool(state->entropy_pool, RNG_POOL_SIZE, aes_key)) {
-        // Hardware mixing successful
-        FURI_LOG_D(TAG, "Pool mixed with hardware AES");
-    } else {
-        // Fallback to optimized software mixing
+    // Choose mixing method based on configuration
+    bool use_hardware_aes = false;
+    
+    switch(state->mixing_mode) {
+        case MixingModeHardware:
+            use_hardware_aes = true;
+            break;
+        case MixingModeSoftware:
+            use_hardware_aes = false;
+            break;
+        case MixingModeAuto:
+        default:
+            // Try hardware first, fallback to software if it fails
+            use_hardware_aes = true;
+            break;
+    }
+    
+    bool hardware_success = false;
+    if(use_hardware_aes) {
+        hardware_success = flipper_rng_hw_aes_mix_pool(state->entropy_pool, RNG_POOL_SIZE, aes_key);
+        if(hardware_success) {
+            FURI_LOG_D(TAG, "Pool mixed with hardware AES");
+        } else if(state->mixing_mode == MixingModeHardware) {
+            FURI_LOG_W(TAG, "Hardware AES mixing failed but forced mode - retrying");
+            // Try once more for hardware-only mode
+            hardware_success = flipper_rng_hw_aes_mix_pool(state->entropy_pool, RNG_POOL_SIZE, aes_key);
+        }
+    }
+    
+    if(!hardware_success) {
+        // Use software mixing (either by choice or as fallback)
         size_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
         
         // Get fresh hardware random for mixing
@@ -185,6 +210,8 @@ void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
         for(size_t i = 1; i < RNG_POOL_SIZE - 1; i++) {
             state->entropy_pool[i] ^= (state->entropy_pool[i - 1] >> 1) ^ (state->entropy_pool[i + 1] << 1);
         }
+        
+        FURI_LOG_D(TAG, "Pool mixed with optimized software mixing");
     }
     
     furi_mutex_release(state->mutex);

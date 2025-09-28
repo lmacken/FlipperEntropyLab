@@ -59,6 +59,12 @@ void flipper_rng_output_mode_changed(VariableItem* item);
 // Poll interval callback
 void flipper_rng_poll_interval_changed(VariableItem* item);
 
+// Visual refresh rate callback
+void flipper_rng_visual_refresh_changed(VariableItem* item);
+
+// Mixing mode callback
+void flipper_rng_mixing_mode_changed(VariableItem* item);
+
 // External entropy callback
 
 // Visualization callbacks are declared in flipper_rng.h
