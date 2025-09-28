@@ -80,5 +80,7 @@ bool flipper_rng_source_stats_input_callback(InputEvent* event, void* context);
 // Passphrase view callbacks and functions
 void flipper_rng_passphrase_draw_callback(Canvas* canvas, void* context);
 bool flipper_rng_passphrase_input_callback(InputEvent* event, void* context);
+void flipper_rng_passphrase_enter_callback(void* context);
+void flipper_rng_passphrase_exit_callback(void* context);
 View* flipper_rng_passphrase_view_alloc(FlipperRngApp* app);
 void flipper_rng_passphrase_view_free(View* view);

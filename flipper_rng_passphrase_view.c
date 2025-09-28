@@ -2,11 +2,16 @@
 #include "flipper_rng_views.h"
 #include "flipper_rng_passphrase.h"
 #include "flipper_rng_passphrase_sd.h"
+#include "flipper_rng_entropy.h"
 #include <gui/elements.h>
 #include <string.h>
 #include <furi.h>
 
 #define TAG "FlipperRNG-PassphraseView"
+
+// Forward declarations for entropy worker management
+static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app);
+static void flipper_rng_passphrase_stop_entropy_worker(FlipperRngApp* app);
 
 // Worker thread context for async index building
 typedef struct {
@@ -73,6 +78,56 @@ static int32_t index_build_worker(void* context) {
     );
     
     return 0;
+}
+
+// Start entropy worker for continuous background entropy collection
+static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app) {
+    // Only start if not already running
+    if(app->state->is_running) {
+        FURI_LOG_D(TAG, "Entropy worker already running");
+        return;
+    }
+    
+    FURI_LOG_I(TAG, "Starting background entropy collection for passphrase generation...");
+    
+    // Ensure worker thread is stopped before starting
+    if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
+        FURI_LOG_D(TAG, "Waiting for previous worker to stop...");
+        app->state->is_running = false;
+        furi_thread_join(app->worker_thread);
+    }
+    
+    // Reset counters for fresh start
+    app->state->bytes_generated = 0;
+    app->state->samples_collected = 0;
+    app->state->bits_from_hw_rng = 0;
+    app->state->bits_from_subghz_rssi = 0;
+    app->state->bits_from_infrared = 0;
+    memset(app->state->byte_histogram, 0, sizeof(app->state->byte_histogram));
+    
+    // Start the worker thread for background entropy collection
+    app->state->is_running = true;
+    furi_thread_start(app->worker_thread);
+    
+    // Start IR worker if IR entropy is enabled
+    // This is handled by the main app, but we need to access the IR worker functions
+    // For now, let's just log that we'd start it
+    FURI_LOG_D(TAG, "Background entropy worker started for passphrase generation");
+}
+
+// Stop entropy worker when leaving passphrase view
+static void flipper_rng_passphrase_stop_entropy_worker(FlipperRngApp* app) {
+    if(!app->state->is_running) {
+        FURI_LOG_D(TAG, "Entropy worker not running");
+        return;
+    }
+    
+    FURI_LOG_I(TAG, "Stopping background entropy collection...");
+    app->state->is_running = false;
+    
+    // Don't block GUI thread with join - let worker exit on its own
+    // The worker will exit cleanly when is_running becomes false
+    FURI_LOG_D(TAG, "Background entropy worker stop requested");
 }
 
 // Draw callback for diceware view
@@ -235,6 +290,9 @@ bool flipper_rng_passphrase_input_callback(InputEvent* event, void* context) {
                         if(model->sd_context && model->sd_context->is_loaded && !model->is_loading) {
                             model->is_generating = true;
                             
+                            // Entropy worker should already be running in background
+                            FURI_LOG_D(TAG, "Generating passphrase with continuously refreshed entropy pool");
+                            
                             flipper_rng_passphrase_generate_sd(
                                 app->state,
                                 model->sd_context,
@@ -347,6 +405,19 @@ void flipper_rng_passphrase_enter_callback(void* context) {
         },
         true
     );
+    
+    // Start background entropy collection for continuous fresh entropy
+    flipper_rng_passphrase_start_entropy_worker(app);
+}
+
+// Exit callback - called when leaving the view
+void flipper_rng_passphrase_exit_callback(void* context) {
+    FlipperRngApp* app = context;
+    
+    FURI_LOG_I(TAG, "Exiting passphrase generator, stopping background entropy collection");
+    
+    // Stop background entropy collection when leaving passphrase generator
+    flipper_rng_passphrase_stop_entropy_worker(app);
 }
 
 // Allocate diceware view
@@ -358,6 +429,7 @@ View* flipper_rng_passphrase_view_alloc(FlipperRngApp* app) {
     view_set_draw_callback(view, flipper_rng_passphrase_draw_callback);
     view_set_input_callback(view, flipper_rng_passphrase_input_callback);
     view_set_enter_callback(view, flipper_rng_passphrase_enter_callback);
+    view_set_exit_callback(view, flipper_rng_passphrase_exit_callback);
     
     // Initialize model
     with_view_model(
