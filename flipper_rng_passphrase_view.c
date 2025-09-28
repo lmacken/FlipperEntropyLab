@@ -77,6 +77,10 @@ static int32_t index_build_worker(void* context) {
         true
     );
     
+    // Now that wordlist is ready, start background entropy collection
+    FURI_LOG_I(TAG, "Wordlist ready, starting background entropy collection...");
+    flipper_rng_passphrase_start_entropy_worker(app);
+    
     return 0;
 }
 
@@ -406,8 +410,21 @@ void flipper_rng_passphrase_enter_callback(void* context) {
         true
     );
     
-    // Start background entropy collection for continuous fresh entropy
-    flipper_rng_passphrase_start_entropy_worker(app);
+    // Note: Entropy worker will be started automatically after wordlist loading completes
+    // If wordlist is already loaded and indexed, start entropy worker now
+    with_view_model(
+        app->diceware_view,
+        FlipperRngPassphraseModel* model,
+        {
+            if(model->sd_context && model->sd_context->is_loaded && 
+               flipper_rng_passphrase_sd_is_indexed(model->sd_context) && 
+               !model->is_loading) {
+                FURI_LOG_I(TAG, "Wordlist already ready, starting background entropy collection...");
+                flipper_rng_passphrase_start_entropy_worker(app);
+            }
+        },
+        true
+    );
 }
 
 // Exit callback - called when leaving the view
