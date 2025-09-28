@@ -40,10 +40,12 @@ typedef enum {
     FlipperRngViewByteDistribution,  // New: Byte Distribution
     FlipperRngViewSourceStats,       // New: Entropy source comparison
     FlipperRngViewTest,
+    FlipperRngViewDiceware,          // New: Passphrase generator
     FlipperRngViewAbout,  // About view with QR code
 } FlipperRngView;
 
 // Application state
+#define FLIPPER_RNG_STATE_DEFINED
 typedef struct {
     FuriMutex* mutex;
     uint32_t entropy_sources;
@@ -106,6 +108,7 @@ typedef struct {
     View* byte_distribution_view;  // New: Byte Distribution view
     View* source_stats_view;       // New: Entropy source stats view
     View* test_view;
+    View* diceware_view;           // New: Passphrase generator view
     View* about_view;  // About view with QR code
     
     // Persistent IR worker for continuous collection

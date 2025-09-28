@@ -146,6 +146,7 @@ typedef enum {
     FlipperRngMenuByteDistribution,  // New: Byte Distribution
     FlipperRngMenuSourceStats,        // New: Source comparison
     FlipperRngMenuTest,
+    FlipperRngMenuDiceware,           // New: Passphrase generator
     FlipperRngMenuAbout,
 } FlipperRngMenuItem;
 
@@ -297,6 +298,11 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewTest);
         break;
         
+    case FlipperRngMenuDiceware:
+        FURI_LOG_I(TAG, "Passphrase Generator selected");
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewDiceware);
+        break;
+        
     case FlipperRngMenuAbout:
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewAbout);
         break;
@@ -397,6 +403,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     submenu_add_item(app->submenu, "Distribution", FlipperRngMenuByteDistribution, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Sources", FlipperRngMenuSourceStats, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Test Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Passphrase Generator", FlipperRngMenuDiceware, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "About", FlipperRngMenuAbout, flipper_rng_menu_callback, app);
     
     View* submenu_view = submenu_get_view(app->submenu);
@@ -455,6 +462,11 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->test_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewTest, app->test_view);
     
+    // Passphrase generator view
+    app->diceware_view = flipper_rng_passphrase_view_alloc(app);
+    view_set_previous_callback(app->diceware_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewDiceware, app->diceware_view);
+    
     // About view with QR code
     app->about_view = flipper_rng_about_view_alloc();
     view_set_previous_callback(app->about_view, flipper_rng_back_callback);
@@ -475,9 +487,9 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     // Initialize IR worker (but don't start it yet)
     app->ir_worker = NULL;  // Will be allocated when generation starts
     
-    // Start with splash screen
-    FURI_LOG_I(TAG, "Showing splash screen...");
-    view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewSplash);
+    // Start with main menu (splash screen temporarily disabled)
+    FURI_LOG_I(TAG, "Starting at main menu...");
+    view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewMenu);
     
     // Set initial LED status (red = stopped) - do this last when everything is ready
     FURI_LOG_I(TAG, "Setting initial LED state to RED (stopped)...");
@@ -519,6 +531,7 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewByteDistribution);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSourceStats);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewTest);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewDiceware);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewAbout);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSplash);
     
@@ -530,6 +543,7 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_free(app->byte_distribution_view);
     view_free(app->source_stats_view);
     view_free(app->test_view);
+    flipper_rng_passphrase_view_free(app->diceware_view);
     flipper_rng_about_view_free(app->about_view);
     flipper_rng_splash_free(app->splash);
     
