@@ -8,10 +8,12 @@
 #include <furi_hal.h>
 #include <furi_hal_serial.h>
 #include <furi_hal_bus.h>
+#include <furi_hal_cortex.h>
 #include <stm32wbxx_ll_dma.h>
 #include <stm32wbxx_ll_usart.h>
 
 #define TAG "FlipperRNG_HW"
+#define CRYPTO_TIMEOUT_US 10000  // 10ms timeout for AES operations
 
 // DMA buffer for async UART transmission
 #define DMA_BUFFER_SIZE 2048  // Increased for better throughput
@@ -24,6 +26,7 @@ static FuriMutex* dma_tx_mutex = NULL;
 
 // Forward declarations
 static void flipper_rng_hw_aes_init(void);
+static bool flipper_rng_hw_aes_wait_flag(uint32_t flag);
 
 // Hardware AES context for fast mixing
 static bool hw_aes_initialized = false;
@@ -111,6 +114,17 @@ void flipper_rng_hw_accel_deinit(void) {
     hw_aes_initialized = false;
 }
 
+// Optimized AES flag waiting based on official firmware
+static bool flipper_rng_hw_aes_wait_flag(uint32_t flag) {
+    FuriHalCortexTimer timer = furi_hal_cortex_timer_get(CRYPTO_TIMEOUT_US);
+    while(!READ_BIT(AES1->SR, flag)) {
+        if(furi_hal_cortex_timer_is_expired(timer)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Ultra-fast hardware AES mixing for entropy pool
 bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key) {
     if(!hw_aes_mutex || !hw_aes_peripheral_ready) return false;
@@ -148,28 +162,22 @@ bool flipper_rng_hw_aes_mix_pool(uint8_t* pool, size_t pool_size, uint32_t* key)
         AES1->DINR = __builtin_bswap32(block[2]);
         AES1->DINR = __builtin_bswap32(block[3]);
         
-        // Wait for computation complete with shorter timeout
-        uint32_t timeout = 100;  // Reduced from 1000 to prevent long delays
-        while(!(AES1->SR & AES_SR_CCF) && timeout--) {
-            // No delay - just busy wait for faster operation
-        }
-        
-        if(timeout == 0) {
+        // Wait for computation complete using optimized timer (based on official firmware)
+        if(!flipper_rng_hw_aes_wait_flag(AES_SR_CCF)) {
             FURI_LOG_W(TAG, "AES operation timeout at block %zu", i/16);
             CLEAR_BIT(AES1->CR, AES_CR_EN);
-            furi_hal_bus_disable(FuriHalBusAES1);
             furi_mutex_release(hw_aes_mutex);
             return false;
         }
+        
+        // Clear completion flag first (official firmware pattern)
+        SET_BIT(AES1->CR, AES_CR_CCFC);
         
         // Read encrypted result and XOR back into pool
         block[0] ^= __builtin_bswap32(AES1->DOUTR);
         block[1] ^= __builtin_bswap32(AES1->DOUTR);
         block[2] ^= __builtin_bswap32(AES1->DOUTR);
         block[3] ^= __builtin_bswap32(AES1->DOUTR);
-        
-        // Clear completion flag
-        SET_BIT(AES1->CR, AES_CR_CCFC);
     }
     
     // Keep AES peripheral enabled for next use (just disable processing)
