@@ -36,9 +36,8 @@ static const char* visual_refresh_names[] = {
 };
 
 static const char* mixing_mode_names[] = {
-    "Auto",
     "HW AES",
-    "Software",
+    "SW XOR",
 };
 
 static const uint32_t visual_refresh_values[] = {

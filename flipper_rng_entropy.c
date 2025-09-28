@@ -160,10 +160,8 @@ void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
         case MixingModeSoftware:
             use_hardware_aes = false;
             break;
-        case MixingModeAuto:
         default:
-            // Try hardware first, fallback to software if it fails
-            use_hardware_aes = true;
+            use_hardware_aes = true;  // Default to hardware AES
             break;
     }
     
@@ -173,13 +171,20 @@ void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
         if(hardware_success) {
             FURI_LOG_D(TAG, "Pool mixed with hardware AES");
         } else if(state->mixing_mode == MixingModeHardware) {
-            FURI_LOG_W(TAG, "Hardware AES mixing failed but forced mode - retrying");
+            FURI_LOG_E(TAG, "Hardware AES mixing failed - this should not happen!");
             // Try once more for hardware-only mode
             hardware_success = flipper_rng_hw_aes_mix_pool(state->entropy_pool, RNG_POOL_SIZE, aes_key);
+            if(!hardware_success) {
+                FURI_LOG_E(TAG, "Hardware AES mixing failed twice - hardware error detected!");
+                // We should stop the generator and show error to user
+                state->is_running = false;
+                furi_mutex_release(state->mutex);
+                return;  // Exit without mixing - this will cause the generator to stop
+            }
         }
     }
     
-    if(!hardware_success) {
+    if(!hardware_success && state->mixing_mode == MixingModeSoftware) {
         // Use software mixing (either by choice or as fallback)
         size_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
         

@@ -32,9 +32,8 @@ typedef enum {
 
 // Mixing mode for entropy pool
 typedef enum {
-    MixingModeAuto,      // Try hardware AES first, fallback to software
     MixingModeHardware,  // Force hardware AES only
-    MixingModeSoftware,  // Force software mixing only
+    MixingModeSoftware,  // Force software XOR mixing only
 } MixingMode;
 
 // View IDs
