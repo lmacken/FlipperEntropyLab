@@ -464,7 +464,7 @@ View* flipper_rng_passphrase_view_alloc(FlipperRngApp* app) {
             model->entropy_bits = flipper_rng_passphrase_entropy_bits(model->num_words);
             model->is_generating = false;
             model->generation_count = 0;
-            model->list_type = PassphraseListEmbedded;
+            model->list_type = PassphraseListEFFLong;
             
             // Initialize SD context but DON'T load wordlist yet
             model->sd_context = flipper_rng_passphrase_sd_alloc();

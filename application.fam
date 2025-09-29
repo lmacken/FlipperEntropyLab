@@ -10,5 +10,6 @@ App(
     fap_icon="entropy_lab.png",
     fap_author="Entropy Lab Team",
     fap_weburl="https://github.com/flipper/EntropyLab",
+    fap_file_assets="wordlists",
     sources=["*.c"],
 )

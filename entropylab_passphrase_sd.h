@@ -4,10 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PASSPHRASE_SD_PATH "/ext/apps/Tools/FlipperRNG"
-#define PASSPHRASE_EFF_LONG_PATH "/ext/apps/Tools/FlipperRNG/eff_large_wordlist.txt"
-#define PASSPHRASE_EFF_SHORT1_PATH "/ext/apps/Tools/FlipperRNG/eff_short_wordlist_1.txt"
-#define PASSPHRASE_EFF_SHORT2_PATH "/ext/apps/Tools/FlipperRNG/eff_short_wordlist_2_0.txt"
+#define PASSPHRASE_SD_PATH "/ext/apps/Tools/entropylab"
+#define PASSPHRASE_EFF_LONG_PATH "/ext/apps/Tools/entropylab/eff_large_wordlist.txt"
+#define PASSPHRASE_EFF_SHORT1_PATH "/ext/apps/Tools/entropylab/eff_short_wordlist_1.txt"
+#define PASSPHRASE_EFF_SHORT2_PATH "/ext/apps/Tools/entropylab/eff_short_wordlist_2_0.txt"
 
 // Full EFF wordlist sizes
 #define EFF_LONG_SIZE 7776    // 6^5 dice rolls, ~12.9 bits per word

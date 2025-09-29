@@ -29,60 +29,23 @@ uint16_t flipper_rng_passphrase_get_random_index(FlipperRngState* state, uint16_
     return random_value % max_value;
 }
 
-// Generate a diceware passphrase
+// Generate a diceware passphrase - now uses only SD wordlists
 void flipper_rng_passphrase_generate(
     FlipperRngState* state, 
     char* passphrase, 
     size_t max_length, 
     uint8_t num_words) {
     
-    if(!state || !passphrase || max_length == 0) {
-        FURI_LOG_E(TAG, "Invalid parameters for diceware generation");
-        return;
+    UNUSED(state);
+    UNUSED(num_words);
+    
+    // This function is deprecated - use flipper_rng_passphrase_generate_sd instead
+    // All passphrases now use the shipped EFF wordlists
+    FURI_LOG_E(TAG, "Embedded wordlist removed - use SD wordlist generation");
+    
+    if(passphrase && max_length > 0) {
+        snprintf(passphrase, max_length, "Use SD wordlist mode");
     }
-    
-    // Clamp number of words to valid range
-    if(num_words < PASSPHRASE_MIN_WORDS) {
-        num_words = PASSPHRASE_MIN_WORDS;
-    } else if(num_words > PASSPHRASE_MAX_WORDS) {
-        num_words = PASSPHRASE_MAX_WORDS;
-    }
-    
-    // Clear the passphrase buffer
-    memset(passphrase, 0, max_length);
-    
-    size_t current_pos = 0;
-    
-    for(uint8_t i = 0; i < num_words; i++) {
-        // Get random word index
-        uint16_t word_index = flipper_rng_passphrase_get_random_index(state, PASSPHRASE_WORDLIST_SIZE);
-        
-        // Get the word
-        const char* word = passphrase_wordlist[word_index];
-        size_t word_len = strlen(word);
-        
-        // Check if we have space for this word plus a space (or null terminator)
-        size_t space_needed = word_len + ((i < num_words - 1) ? 1 : 0);
-        if(current_pos + space_needed >= max_length) {
-            FURI_LOG_W(TAG, "Passphrase buffer too small, truncating at %d words", i);
-            break;
-        }
-        
-        // Copy the word
-        memcpy(passphrase + current_pos, word, word_len);
-        current_pos += word_len;
-        
-        // Add space between words (but not after the last word)
-        if(i < num_words - 1) {
-            passphrase[current_pos] = ' ';
-            current_pos++;
-        }
-    }
-    
-    // Ensure null termination
-    passphrase[current_pos] = '\0';
-    
-    FURI_LOG_I(TAG, "Generated %d-word passphrase: %s", num_words, passphrase);
 }
 
 // Generate a diceware passphrase from SD card wordlist
@@ -159,6 +122,6 @@ void flipper_rng_passphrase_generate_sd(
 
 // Calculate entropy bits for a given number of words
 float flipper_rng_passphrase_entropy_bits(uint8_t num_words) {
-    // Each word from a 1848-word embedded list provides log2(1848) ≈ 10.85 bits of entropy
-    return num_words * 10.85f;
+    // Each word from the EFF long wordlist (7776 words) provides log2(7776) ≈ 12.925 bits of entropy
+    return num_words * 12.925f;
 }
