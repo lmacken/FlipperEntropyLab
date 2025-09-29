@@ -15,7 +15,7 @@
 #define SLIP39_SIZE 1024      // 2^10 words, 10.0 bits per word
 
 typedef enum {
-    PassphraseListEFFLong,     // EFF Long wordlist (7776 words, ~12.925 bits/word)
+    PassphraseListEFFLong,     // EFF wordlist (7776 words, ~12.925 bits/word)
     PassphraseListBIP39,       // BIP-39 Bitcoin wordlist (2048 words, 11.0 bits/word)
     PassphraseListSLIP39,      // SLIP-39 Shamir wordlist (1024 words, 10.0 bits/word)
     PassphraseListCount

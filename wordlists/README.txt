@@ -5,7 +5,7 @@ This directory contains official wordlists from multiple cryptographic
 standards for secure passphrase generation.
 
 Wordlists:
-- eff_large_wordlist.txt: EFF Long wordlist (7776 words, ~12.925 bits/word)
+- eff_large_wordlist.txt: EFF wordlist (7776 words, ~12.925 bits/word)
 - bip39_english.txt: BIP-39 Bitcoin wordlist (2048 words, ~11.0 bits/word)  
 - slip39_english.txt: SLIP-39 Shamir wordlist (1024 words, ~10.0 bits/word)
 

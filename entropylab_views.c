@@ -42,7 +42,7 @@ static const char* mixing_mode_names[] = {
 };
 
 static const char* wordlist_names[] = {
-    "EFF Long (7776)",
+    "EFF (7776)",
     "BIP-39 (2048)", 
     "SLIP-39 (1024)"
 };
@@ -172,7 +172,18 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     variable_item_set_current_value_index(item, app->state->mixing_mode);
     variable_item_set_current_value_text(item, mixing_mode_names[app->state->mixing_mode]);
     
-    // Wordlist Selection
+    // Output mode
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Output Mode",
+        COUNT_OF(output_mode_names),
+        flipper_rng_output_mode_changed,
+        app
+    );
+    variable_item_set_current_value_index(item, app->state->output_mode);
+    variable_item_set_current_value_text(item, output_mode_names[app->state->output_mode]);
+    
+    // Wordlist Selection (moved below Output Mode)
     item = variable_item_list_add(
         app->variable_item_list,
         "Wordlist",
@@ -190,17 +201,6 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     }
     variable_item_set_current_value_index(item, wordlist_index);
     variable_item_set_current_value_text(item, wordlist_names[wordlist_index]);
-    
-    // Output mode
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Output Mode",
-        COUNT_OF(output_mode_names),
-        flipper_rng_output_mode_changed,
-        app
-    );
-    variable_item_set_current_value_index(item, app->state->output_mode);
-    variable_item_set_current_value_text(item, output_mode_names[app->state->output_mode]);
     
     // Poll interval
     item = variable_item_list_add(
