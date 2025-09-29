@@ -10,6 +10,7 @@
 #include <notification/notification_messages.h>
 #include <infrared_worker.h>
 #include <storage/storage.h>
+#include "entropylab_passphrase_sd.h"
 
 #define FLIPPER_RNG_VERSION "1.0"
 #define RNG_BUFFER_SIZE 256
@@ -58,6 +59,7 @@ typedef struct {
     uint32_t entropy_sources;
     OutputMode output_mode;
     MixingMode mixing_mode;
+    PassphraseListType wordlist_type;  // Selected wordlist for passphrase generation
     uint32_t poll_interval_ms;
     uint32_t visual_refresh_ms;  // Configurable visualization refresh rate
     bool is_running;

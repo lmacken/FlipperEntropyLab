@@ -41,6 +41,12 @@ static const char* mixing_mode_names[] = {
     "SW XOR",
 };
 
+static const char* wordlist_names[] = {
+    "EFF Long (7776)",
+    "BIP-39 (2048)", 
+    "SLIP-39 (1024)"
+};
+
 static const uint32_t visual_refresh_values[] = {
     100, 200, 500, 1000,
 };
@@ -55,6 +61,12 @@ static const uint32_t entropy_source_values[] = {
     EntropySourceHardwareRNG | EntropySourceSubGhzRSSI,                          // HW + RF
     EntropySourceHardwareRNG | EntropySourceInfraredNoise,                       // HW + IR
     EntropySourceSubGhzRSSI | EntropySourceInfraredNoise,                        // RF + IR only
+};
+
+static const PassphraseListType wordlist_values[] = {
+    PassphraseListEFFLong,
+    PassphraseListBIP39,
+    PassphraseListSLIP39,
 };
 
 void flipper_rng_source_changed(VariableItem* item) {
@@ -116,6 +128,16 @@ void flipper_rng_mixing_mode_changed(VariableItem* item) {
     FURI_LOG_I(TAG, "Mixing mode changed to: %s", mixing_mode_names[index]);
 }
 
+void flipper_rng_wordlist_changed(VariableItem* item) {
+    FlipperRngApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    
+    app->state->wordlist_type = wordlist_values[index];
+    variable_item_set_current_value_text(item, wordlist_names[index]);
+    
+    FURI_LOG_I(TAG, "Wordlist changed to: %s", wordlist_names[index]);
+}
+
 
 void flipper_rng_setup_config_view(FlipperRngApp* app) {
     VariableItem* item;
@@ -149,6 +171,25 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     );
     variable_item_set_current_value_index(item, app->state->mixing_mode);
     variable_item_set_current_value_text(item, mixing_mode_names[app->state->mixing_mode]);
+    
+    // Wordlist Selection
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Wordlist",
+        COUNT_OF(wordlist_names),
+        flipper_rng_wordlist_changed,
+        app
+    );
+    // Find the index for the current wordlist setting
+    uint32_t wordlist_index = 0;
+    for(uint32_t i = 0; i < COUNT_OF(wordlist_values); i++) {
+        if(wordlist_values[i] == app->state->wordlist_type) {
+            wordlist_index = i;
+            break;
+        }
+    }
+    variable_item_set_current_value_index(item, wordlist_index);
+    variable_item_set_current_value_text(item, wordlist_names[wordlist_index]);
     
     // Output mode
     item = variable_item_list_add(

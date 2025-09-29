@@ -71,7 +71,7 @@ static void extract_word_from_line(char* line, char* word, size_t word_size) {
 PassphraseSDContext* flipper_rng_passphrase_sd_alloc(void) {
     PassphraseSDContext* ctx = malloc(sizeof(PassphraseSDContext));
     if(ctx) {
-        ctx->type = PassphraseListEmbedded;
+        ctx->type = PassphraseListEFFLong;
         ctx->word_count = 0;
         ctx->is_loaded = false;
         ctx->storage = furi_record_open(RECORD_STORAGE);
@@ -125,10 +125,10 @@ static const char* flipper_rng_passphrase_sd_get_path(PassphraseListType type) {
     switch(type) {
         case PassphraseListEFFLong:
             return PASSPHRASE_EFF_LONG_PATH;
-        case PassphraseListEFFShort1:
-            return PASSPHRASE_EFF_SHORT1_PATH;
-        case PassphraseListEFFShort2:
-            return PASSPHRASE_EFF_SHORT2_PATH;
+        case PassphraseListBIP39:
+            return PASSPHRASE_BIP39_PATH;
+        case PassphraseListSLIP39:
+            return PASSPHRASE_SLIP39_PATH;
         default:
             return NULL;
     }
@@ -138,17 +138,17 @@ static uint16_t flipper_rng_passphrase_sd_get_expected_count(PassphraseListType 
     switch(type) {
         case PassphraseListEFFLong:
             return EFF_LONG_SIZE;
-        case PassphraseListEFFShort1:
-            return EFF_SHORT1_SIZE;
-        case PassphraseListEFFShort2:
-            return EFF_SHORT2_SIZE;
+        case PassphraseListBIP39:
+            return BIP39_SIZE;
+        case PassphraseListSLIP39:
+            return SLIP39_SIZE;
         default:
             return 0;
     }
 }
 
 bool flipper_rng_passphrase_sd_exists(PassphraseSDContext* ctx, PassphraseListType type) {
-    if(!ctx || type == PassphraseListEmbedded) return false;
+    if(!ctx || type == PassphraseListEFFLong) return false;
     
     const char* path = flipper_rng_passphrase_sd_get_path(type);
     if(!path) return false;
@@ -165,8 +165,8 @@ bool flipper_rng_passphrase_sd_load(PassphraseSDContext* ctx, PassphraseListType
         ctx->is_loaded = false;
     }
     
-    if(type == PassphraseListEmbedded) {
-        ctx->type = PassphraseListEmbedded;
+    if(type == PassphraseListEFFLong) {
+        ctx->type = PassphraseListEFFLong;
         ctx->is_loaded = true;
         return true;
     }
@@ -255,15 +255,17 @@ float flipper_rng_passphrase_sd_entropy_bits(PassphraseListType type, uint8_t nu
             // log2(7776) ≈ 12.925
             bits_per_word = 12.925f;
             break;
-        case PassphraseListEFFShort1:
-        case PassphraseListEFFShort2:
-            // log2(1296) ≈ 10.34
-            bits_per_word = 10.34f;
+        case PassphraseListBIP39:
+            // log2(2048) = 11.0
+            bits_per_word = 11.0f;
             break;
-        case PassphraseListEmbedded:
+        case PassphraseListSLIP39:
+            // log2(1024) = 10.0
+            bits_per_word = 10.0f;
+            break;
         default:
-            // log2(1848) ≈ 10.85
-            bits_per_word = 10.85f;
+            // Default to EFF Long
+            bits_per_word = 12.925f;
             break;
     }
     
@@ -272,7 +274,7 @@ float flipper_rng_passphrase_sd_entropy_bits(PassphraseListType type, uint8_t nu
 
 // Build index for fast word access
 bool flipper_rng_passphrase_sd_build_index(PassphraseSDContext* ctx, void (*progress_callback)(float progress, void* context), void* callback_context) {
-    if(!ctx || !ctx->is_loaded || ctx->type == PassphraseListEmbedded) {
+    if(!ctx || !ctx->is_loaded || ctx->type == PassphraseListEFFLong) {
         return false;
     }
     

@@ -65,6 +65,9 @@ void flipper_rng_visual_refresh_changed(VariableItem* item);
 // Mixing mode callback
 void flipper_rng_mixing_mode_changed(VariableItem* item);
 
+// Wordlist selection callback
+void flipper_rng_wordlist_changed(VariableItem* item);
+
 // External entropy callback
 
 // Visualization callbacks are declared in flipper_rng.h

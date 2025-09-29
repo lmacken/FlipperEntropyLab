@@ -6,19 +6,19 @@
 
 #define PASSPHRASE_SD_PATH "/ext/apps/Tools/entropylab"
 #define PASSPHRASE_EFF_LONG_PATH "/ext/apps/Tools/entropylab/eff_large_wordlist.txt"
-#define PASSPHRASE_EFF_SHORT1_PATH "/ext/apps/Tools/entropylab/eff_short_wordlist_1.txt"
-#define PASSPHRASE_EFF_SHORT2_PATH "/ext/apps/Tools/entropylab/eff_short_wordlist_2_0.txt"
+#define PASSPHRASE_BIP39_PATH "/ext/apps/Tools/entropylab/bip39_english.txt"
+#define PASSPHRASE_SLIP39_PATH "/ext/apps/Tools/entropylab/slip39_english.txt"
 
-// Full EFF wordlist sizes
-#define EFF_LONG_SIZE 7776    // 6^5 dice rolls, ~12.9 bits per word
-#define EFF_SHORT1_SIZE 1296  // 6^4 dice rolls, ~10.3 bits per word
-#define EFF_SHORT2_SIZE 1296  // 6^4 dice rolls, ~10.3 bits per word
+// Wordlist sizes and entropy
+#define EFF_LONG_SIZE 7776    // 6^5 dice rolls, ~12.925 bits per word
+#define BIP39_SIZE 2048       // 2^11 words, 11.0 bits per word
+#define SLIP39_SIZE 1024      // 2^10 words, 10.0 bits per word
 
 typedef enum {
-    PassphraseListEmbedded,    // Use embedded wordlist
-    PassphraseListEFFLong,     // EFF Long wordlist (7776 words)
-    PassphraseListEFFShort1,   // EFF Short wordlist #1 (1296 words)
-    PassphraseListEFFShort2,   // EFF Short wordlist #2 (1296 words)
+    PassphraseListEFFLong,     // EFF Long wordlist (7776 words, ~12.925 bits/word)
+    PassphraseListBIP39,       // BIP-39 Bitcoin wordlist (2048 words, 11.0 bits/word)
+    PassphraseListSLIP39,      // SLIP-39 Shamir wordlist (1024 words, 10.0 bits/word)
+    PassphraseListCount
 } PassphraseListType;
 
 typedef struct {
