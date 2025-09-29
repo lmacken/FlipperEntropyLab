@@ -43,7 +43,7 @@ static void index_build_progress_callback(float progress, void* context) {
         FlipperRngPassphraseModel* model,
         {
             model->load_progress = progress;
-            snprintf(model->load_status, sizeof(model->load_status), "Building index... %.0f%%", (double)(progress * 100.0f));
+            snprintf(model->load_status, sizeof(model->load_status), "%.0f%% complete", (double)(progress * 100.0f));
         },
         true
     );
@@ -94,6 +94,9 @@ static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app) {
     
     FURI_LOG_I(TAG, "Starting background entropy collection for passphrase generation...");
     
+    // Set LED to blinking green during entropy collection
+    flipper_rng_set_led_generating(app);
+    
     // Ensure worker thread is stopped before starting
     if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
         FURI_LOG_D(TAG, "Waiting for previous worker to stop...");
@@ -128,6 +131,9 @@ static void flipper_rng_passphrase_stop_entropy_worker(FlipperRngApp* app) {
     
     FURI_LOG_I(TAG, "Stopping background entropy collection...");
     app->state->is_running = false;
+    
+    // Set LED back to red when stopping entropy collection
+    flipper_rng_set_led_stopped(app);
     
     // Don't block GUI thread with join - let worker exit on its own
     // The worker will exit cleanly when is_running becomes false
@@ -169,7 +175,7 @@ void flipper_rng_passphrase_draw_callback(Canvas* canvas, void* context) {
     
     // Title
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str_aligned(canvas, 64, 1, AlignCenter, AlignTop, "Passphrase Generator");
+    canvas_draw_str_aligned(canvas, 64, 1, AlignCenter, AlignTop, "Entropy Lab - Passphrase");
     
     // Check if SD wordlist is available
     if(!model->sd_available || !model->sd_context || !model->sd_context->is_loaded) {

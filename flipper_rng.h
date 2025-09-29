@@ -47,7 +47,8 @@ typedef enum {
     FlipperRngViewSourceStats,       // New: Entropy source comparison
     FlipperRngViewTest,
     FlipperRngViewDiceware,          // New: Passphrase generator
-    FlipperRngViewAbout,  // About view with QR code
+    FlipperRngViewAbout,             // About view (simplified)
+    FlipperRngViewDonate,            // New: Donation QR code view
 } FlipperRngView;
 
 // Application state
@@ -116,7 +117,8 @@ typedef struct {
     View* source_stats_view;       // New: Entropy source stats view
     View* test_view;
     View* diceware_view;           // New: Passphrase generator view
-    View* about_view;  // About view with QR code
+    View* about_view;              // About view (simplified)
+    View* donate_view;             // New: Donation QR code view
     
     // Persistent IR worker for continuous collection
     InfraredWorker* ir_worker;
@@ -125,6 +127,11 @@ typedef struct {
 // Function prototypes
 FlipperRngApp* flipper_rng_app_alloc(void);
 void flipper_rng_app_free(FlipperRngApp* app);
+
+// LED status control functions
+void flipper_rng_set_led_stopped(FlipperRngApp* app);
+void flipper_rng_set_led_generating(FlipperRngApp* app);
+void flipper_rng_set_led_off(FlipperRngApp* app);
 
 // IR callback for persistent worker
 void flipper_rng_ir_callback(void* ctx, InfraredWorkerSignal* signal);

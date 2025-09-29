@@ -2,6 +2,7 @@
 #include "flipper_rng_entropy.h"
 #include "flipper_rng_views.h"
 #include "flipper_rng_about.h"
+#include "flipper_rng_donate.h"
 #include "flipper_rng_splash.h"
 #include "flipper_rng_hw_accel.h"
 #include <furi_hal_random.h>
@@ -19,20 +20,20 @@
 
 
 // LED status control functions
-static void flipper_rng_set_led_stopped(FlipperRngApp* app) {
+void flipper_rng_set_led_stopped(FlipperRngApp* app) {
     // Stop blinking first, then set solid red
     notification_message(app->notifications, &sequence_blink_stop);
     notification_message(app->notifications, &sequence_set_only_red_255);
     FURI_LOG_I(TAG, "LED set to SOLID RED (stopped)");
 }
 
-static void flipper_rng_set_led_generating(FlipperRngApp* app) {
+void flipper_rng_set_led_generating(FlipperRngApp* app) {
     // Use predefined blinking green sequence
     notification_message(app->notifications, &sequence_blink_start_green);
     FURI_LOG_I(TAG, "LED set to BLINKING GREEN (generating)");
 }
 
-static void flipper_rng_set_led_off(FlipperRngApp* app) {
+void flipper_rng_set_led_off(FlipperRngApp* app) {
     // Use predefined blink stop sequence
     notification_message(app->notifications, &sequence_blink_stop);
     FURI_LOG_I(TAG, "LED turned OFF");
@@ -148,9 +149,12 @@ typedef enum {
     FlipperRngMenuTest,
     FlipperRngMenuDiceware,           // New: Passphrase generator
     FlipperRngMenuAbout,
+    FlipperRngMenuDonate,             // New: Donation QR code
 } FlipperRngMenuItem;
 
-static void flipper_rng_menu_callback(void* context, uint32_t index) {
+// Forward declarations
+
+void flipper_rng_menu_callback(void* context, uint32_t index) {
     FlipperRngApp* app = context;
     
     switch(index) {
@@ -306,8 +310,14 @@ static void flipper_rng_menu_callback(void* context, uint32_t index) {
     case FlipperRngMenuAbout:
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewAbout);
         break;
+        
+    case FlipperRngMenuDonate:
+        FURI_LOG_I(TAG, "Donate selected");
+        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewDonate);
+        break;
     }
 }
+
 
 static uint32_t flipper_rng_exit_callback(void* context) {
     UNUSED(context);
@@ -395,9 +405,9 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
     
-    // Main menu
+    // Main submenu
     app->submenu = submenu_alloc();
-    submenu_set_header(app->submenu, "FlipperRNG");
+    submenu_set_header(app->submenu, "Entropy Lab v1.0");
     submenu_add_item(app->submenu, "Start Generator", FlipperRngMenuToggle, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Config", FlipperRngMenuConfig, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Visualize", FlipperRngMenuVisualization, flipper_rng_menu_callback, app);
@@ -406,8 +416,10 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     submenu_add_item(app->submenu, "Test Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Passphrase Generator", FlipperRngMenuDiceware, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "About", FlipperRngMenuAbout, flipper_rng_menu_callback, app);
+    submenu_add_item(app->submenu, "Donate", FlipperRngMenuDonate, flipper_rng_menu_callback, app);
     
     View* submenu_view = submenu_get_view(app->submenu);
+    
     // Set exit callback for back button on main menu
     view_set_previous_callback(submenu_view, flipper_rng_exit_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewMenu, submenu_view);
@@ -470,10 +482,15 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->diceware_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewDiceware, app->diceware_view);
     
-    // About view with QR code
+    // About view (simplified)
     app->about_view = flipper_rng_about_view_alloc();
     view_set_previous_callback(app->about_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewAbout, app->about_view);
+    
+    // Donate view with QR code
+    app->donate_view = flipper_rng_donate_view_alloc();
+    view_set_previous_callback(app->donate_view, flipper_rng_back_callback);
+    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewDonate, app->donate_view);
     
     // Splash screen
     app->splash = flipper_rng_splash_alloc();
@@ -536,6 +553,7 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewTest);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewDiceware);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewAbout);
+    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewDonate);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSplash);
     
     submenu_free(app->submenu);
@@ -548,6 +566,7 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_free(app->test_view);
     flipper_rng_passphrase_view_free(app->diceware_view);
     flipper_rng_about_view_free(app->about_view);
+    flipper_rng_donate_view_free(app->donate_view);
     flipper_rng_splash_free(app->splash);
     
     view_dispatcher_free(app->view_dispatcher);

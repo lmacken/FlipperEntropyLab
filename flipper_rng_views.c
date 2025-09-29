@@ -3,11 +3,12 @@
 #include <gui/elements.h>
 #include <math.h>
 
+
 #define TAG "FlipperRNG"
 
 // Configuration options
 static const char* entropy_source_names[] = {
-    "All HQ",
+    "All",
     "HW Only",
     "HW+RF", 
     "HW+IR",
@@ -138,6 +139,17 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     variable_item_set_current_value_index(item, entropy_index);
     variable_item_set_current_value_text(item, entropy_source_names[entropy_index]);
     
+    // Pool Mixing (moved up to be right after Entropy Source)
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Pool Mixing",
+        COUNT_OF(mixing_mode_names),
+        flipper_rng_mixing_mode_changed,
+        app
+    );
+    variable_item_set_current_value_index(item, app->state->mixing_mode);
+    variable_item_set_current_value_text(item, mixing_mode_names[app->state->mixing_mode]);
+    
     // Output mode
     item = variable_item_list_add(
         app->variable_item_list,
@@ -186,17 +198,6 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     }
     variable_item_set_current_value_index(item, visual_index);
     variable_item_set_current_value_text(item, visual_refresh_names[visual_index]);
-    
-    // Mixing mode
-    item = variable_item_list_add(
-        app->variable_item_list,
-        "Pool Mixing",
-        COUNT_OF(mixing_mode_names),
-        flipper_rng_mixing_mode_changed,
-        app
-    );
-    variable_item_set_current_value_index(item, app->state->mixing_mode);
-    variable_item_set_current_value_text(item, mixing_mode_names[app->state->mixing_mode]);
 }
 
 // Visualization drawing
@@ -210,7 +211,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
         // MODE 0: Original visualization with all elements
         // Title with app name and version
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 10, "FlipperRNG v1.0");
+        canvas_draw_str(canvas, 2, 10, "Entropy Lab v1.0");
         
         // Status
         canvas_set_font(canvas, FontSecondary);
@@ -690,6 +691,9 @@ void flipper_rng_test_enter_callback(void* context) {
     if(!app->state->is_running) {
         FURI_LOG_I(TAG, "Auto-starting generator for Test Quality...");
         
+        // Set LED to blinking green during test entropy collection
+        flipper_rng_set_led_generating(app);
+        
         // Use the same logic as the main "Start Generator" button
         // Ensure worker thread is stopped first
         if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
@@ -746,6 +750,9 @@ void flipper_rng_test_exit_callback(void* context) {
     if(app->state->is_running) {
         FURI_LOG_I(TAG, "Auto-stopping generator after Test Quality");
         app->state->is_running = false;
+        
+        // Set LED back to red when stopping test entropy collection
+        flipper_rng_set_led_stopped(app);
         
         // Clean up UART if we initialized it
         if(app->state->serial_handle) {
