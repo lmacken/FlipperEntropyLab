@@ -3,7 +3,7 @@
  * Leverages STM32WB55 hardware features for maximum performance
  */
 
-#include "flipper_rng_hw_accel.h"
+#include "entropylab_hw_accel.h"
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_hal_serial.h>

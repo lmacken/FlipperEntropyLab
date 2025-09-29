@@ -1,4 +1,4 @@
-#include "flipper_rng.h"
+#include "entropylab.h"
 #include "qrcode.h"
 #include <gui/elements.h>
 #include <string.h>

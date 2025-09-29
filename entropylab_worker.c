@@ -1,7 +1,7 @@
-#include "flipper_rng.h"
-#include "flipper_rng_entropy.h"
-#include "flipper_rng_views.h"
-#include "flipper_rng_hw_accel.h"
+#include "entropylab.h"
+#include "entropylab_entropy.h"
+#include "entropylab_views.h"
+#include "entropylab_hw_accel.h"
 #include <furi_hal_random.h>
 #include <furi_hal_serial.h>
 #include <storage/storage.h>

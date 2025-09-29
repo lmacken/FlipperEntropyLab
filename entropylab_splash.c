@@ -1,4 +1,4 @@
-#include "flipper_rng_splash.h"
+#include "entropylab_splash.h"
 #include <furi.h>
 #include <gui/canvas.h>
 #include <gui/view.h>

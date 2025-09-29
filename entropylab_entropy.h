@@ -1,6 +1,6 @@
 #pragma once
 
-#include "flipper_rng.h"
+#include "entropylab.h"
 #include <furi_hal_random.h>
 #include <furi_hal_adc.h>
 #include <furi_hal_power.h>

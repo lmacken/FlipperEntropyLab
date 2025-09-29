@@ -1,4 +1,4 @@
-#include "flipper_rng_passphrase_sd.h"
+#include "entropylab_passphrase_sd.h"
 #include <furi.h>
 #include <string.h>
 #include <stdlib.h>

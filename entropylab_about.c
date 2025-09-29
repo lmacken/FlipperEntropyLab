@@ -1,5 +1,5 @@
-#include "flipper_rng.h"
-#include "flipper_rng_about.h"
+#include "entropylab.h"
+#include "entropylab_about.h"
 #include <gui/elements.h>
 #include <string.h>
 #include <stdio.h>

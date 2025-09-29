@@ -1,5 +1,5 @@
-#include "flipper_rng_views.h"
-#include "flipper_rng_entropy.h"
+#include "entropylab_views.h"
+#include "entropylab_entropy.h"
 #include <gui/elements.h>
 #include <math.h>
 

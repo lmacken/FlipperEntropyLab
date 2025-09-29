@@ -1,10 +1,10 @@
-#include "flipper_rng.h"
-#include "flipper_rng_entropy.h"
-#include "flipper_rng_views.h"
-#include "flipper_rng_about.h"
-#include "flipper_rng_donate.h"
-#include "flipper_rng_splash.h"
-#include "flipper_rng_hw_accel.h"
+#include "entropylab.h"
+#include "entropylab_entropy.h"
+#include "entropylab_views.h"
+#include "entropylab_about.h"
+#include "entropylab_donate.h"
+#include "entropylab_splash.h"
+#include "entropylab_hw_accel.h"
 #include <furi_hal_random.h>
 #include <furi_hal_adc.h>
 #include <furi_hal_power.h>
@@ -611,7 +611,7 @@ static void flipper_rng_splash_check_timer(void* context) {
     }
 }
 
-int32_t flipper_rng_app(void* p) {
+int32_t entropylab_app(void* p) {
     UNUSED(p);
     
     FURI_LOG_I(TAG, "FlipperRNG starting...");

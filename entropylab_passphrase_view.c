@@ -1,8 +1,8 @@
-#include "flipper_rng.h"
-#include "flipper_rng_views.h"
-#include "flipper_rng_passphrase.h"
-#include "flipper_rng_passphrase_sd.h"
-#include "flipper_rng_entropy.h"
+#include "entropylab.h"
+#include "entropylab_views.h"
+#include "entropylab_passphrase.h"
+#include "entropylab_passphrase_sd.h"
+#include "entropylab_entropy.h"
 #include <gui/elements.h>
 #include <string.h>
 #include <furi.h>

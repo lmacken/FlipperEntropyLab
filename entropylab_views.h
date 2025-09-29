@@ -1,6 +1,6 @@
 #pragma once
 
-#include "flipper_rng.h"
+#include "entropylab.h"
 #include <gui/view.h>
 #include <gui/modules/variable_item_list.h>
 

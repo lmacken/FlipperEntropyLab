@@ -1,7 +1,7 @@
-#include "flipper_rng.h"  // Must be first to define FlipperRngState
-#include "flipper_rng_passphrase.h"
-#include "flipper_rng_passphrase_sd.h"
-#include "flipper_rng_entropy.h"
+#include "entropylab.h"  // Must be first to define FlipperRngState
+#include "entropylab_passphrase.h"
+#include "entropylab_passphrase_sd.h"
+#include "entropylab_entropy.h"
 #include <furi.h>
 #include <string.h>
 #include <stdio.h>
