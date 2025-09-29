@@ -42,9 +42,9 @@ static const char* mixing_mode_names[] = {
 };
 
 static const char* wordlist_names[] = {
-    "EFF (7776)",
-    "BIP-39 (2048)", 
-    "SLIP-39 (1024)"
+    "EFF",
+    "BIP-39", 
+    "SLIP-39"
 };
 
 static const uint32_t visual_refresh_values[] = {
