@@ -1041,18 +1041,23 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
         canvas_draw_str(canvas, 2, 20, buffer);
         
         // Calculate statistics
-        uint32_t total_bytes = model->bytes_generated;
-        if(total_bytes == 0) total_bytes = 1; // Avoid division by zero
+        // Note: histogram bins count nibbles (4-bit values), not bytes
+        // Each byte generates 2 nibbles (high and low), so total samples = bytes * 2
+        uint32_t total_nibbles = 0;
+        for(int i = 0; i < 16; i++) {
+            total_nibbles += model->histogram[i];
+        }
+        if(total_nibbles == 0) total_nibbles = 1; // Avoid division by zero
         
         // Expected value per bin (perfectly uniform distribution)
-        uint32_t expected_per_bin = total_bytes / 16;
-        if(expected_per_bin == 0) expected_per_bin = 1;
+        float expected_per_bin = (float)total_nibbles / 16.0f;
+        if(expected_per_bin < 1.0f) expected_per_bin = 1.0f;
         
         // Calculate chi-squared statistic for goodness of fit
         float chi_squared = 0.0f;
         for(int i = 0; i < 16; i++) {
-            int32_t diff = (int32_t)model->histogram[i] - (int32_t)expected_per_bin;
-            chi_squared += ((float)diff * (float)diff) / (float)expected_per_bin;
+            float diff = (float)model->histogram[i] - expected_per_bin;
+            chi_squared += (diff * diff) / expected_per_bin;
         }
         
         // Find min and max for "zoomed" scaling (show small differences)
@@ -1065,9 +1070,12 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
         
         // Use a zoomed range to amplify small differences
         uint32_t range = max_val - min_val;
-        if(range < expected_per_bin / 20) {
+        uint32_t zoom_threshold = (uint32_t)(expected_per_bin / 20.0f);
+        if(zoom_threshold < 1) zoom_threshold = 1;
+        
+        if(range < zoom_threshold) {
             // Very uniform - use narrow range for zoom
-            range = expected_per_bin / 20;
+            range = zoom_threshold;
         }
         if(range == 0) range = 1;
         
