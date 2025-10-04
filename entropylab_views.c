@@ -610,7 +610,7 @@ void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t 
                     model->histogram[i] = app->state->byte_histogram[i];
                 }
             },
-            true
+            true  // This triggers view redraw
         );
     }
     

@@ -187,8 +187,12 @@ int32_t flipper_rng_worker_thread(void* context) {
             
             bool should_update = false;
             
-            // Time-based updates using configurable refresh rate only
-            if(current_time - last_vis_update >= target_vis_interval_ms) {
+            // Time-based updates using configurable refresh rate
+            // Handle overflow-safe time comparison
+            uint32_t elapsed = current_time - last_vis_update;
+            if(elapsed >= target_vis_interval_ms || elapsed > 0x80000000) {
+                // Update if enough time passed OR if time wrapped around (overflow)
+                // 0x80000000 = half of uint32_t range, detects backward time jumps
                 should_update = true;
                 last_vis_update = current_time;
             }
