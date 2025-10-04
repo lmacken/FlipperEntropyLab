@@ -98,8 +98,11 @@ int32_t flipper_rng_worker_thread(void* context) {
             flipper_rng_extract_random_bytes(app->state, &output_buffer[buffer_pos], bytes_to_extract);
             
             // Update histogram for the extracted bytes
+            // Each byte contributes TWO nibbles: high (>>4) and low (&0x0F)
             for(int i = 0; i < bytes_to_extract; i++) {
-                app->state->byte_histogram[output_buffer[buffer_pos + i] >> 4]++;
+                uint8_t byte = output_buffer[buffer_pos + i];
+                app->state->byte_histogram[byte >> 4]++;      // High nibble
+                app->state->byte_histogram[byte & 0x0F]++;    // Low nibble
             }
             
             buffer_pos += bytes_to_extract;
