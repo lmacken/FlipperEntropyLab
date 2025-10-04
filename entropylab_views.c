@@ -752,11 +752,15 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
         canvas_draw_str(canvas, 2, 62, "Quality:");
         
         // Chi-squared p-value interpretation (15 degrees of freedom)
-        // Good if chi-squared < 25 (p > 0.05), Excellent if < 22 (p > 0.10)
+        // Statistical thresholds from chi-squared distribution table
+        // Good range: 7.3-22.3 (90% confidence interval)
+        // df=15: critical values at p=0.90 (7.3) and p=0.10 (22.3)
         const char* quality = "Perfect";
-        if(chi_squared > 30) quality = "Poor";
-        else if(chi_squared > 25) quality = "Fair";
-        else if(chi_squared > 22) quality = "Good";
+        if(chi_squared > 25.0f) quality = "Poor";       // p < 0.05 (outside 95% CI)
+        else if(chi_squared > 22.3f) quality = "Fair";  // p < 0.10
+        else if(chi_squared > 15.0f) quality = "Good";  // p < 0.50
+        else if(chi_squared > 8.5f) quality = "Perfect"; // p < 0.90
+        // else chi_squared <= 8.5: Excellent (very uniform)
         
         snprintf(buffer, sizeof(buffer), "%s (X2=%.1f)", quality, (double)chi_squared);
         canvas_draw_str(canvas, 42, 62, buffer);
