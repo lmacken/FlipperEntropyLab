@@ -1133,6 +1133,28 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
     }
 }
 
+void flipper_rng_byte_distribution_enter_callback(void* context) {
+    FlipperRngApp* app = context;
+    FURI_LOG_I(TAG, "Entering byte distribution view");
+    
+    // Sync state from app when entering the view
+    with_view_model(
+        app->byte_distribution_view,
+        FlipperRngVisualizationModel* model,
+        {
+            model->is_running = app->state->is_running;
+            model->bytes_generated = app->state->bytes_generated;
+            // Copy histogram data
+            for(int i = 0; i < 16; i++) {
+                model->histogram[i] = app->state->byte_histogram[i];
+            }
+            FURI_LOG_I(TAG, "Byte distribution state synced: running=%d, bytes=%lu", 
+                      model->is_running, model->bytes_generated);
+        },
+        true
+    );
+}
+
 bool flipper_rng_byte_distribution_input_callback(InputEvent* event, void* context) {
     UNUSED(context);  // Mark context as unused to avoid compiler warning
     bool consumed = false;

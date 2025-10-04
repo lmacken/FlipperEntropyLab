@@ -455,6 +455,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_allocate_model(app->byte_distribution_view, ViewModelTypeLocking, sizeof(FlipperRngVisualizationModel));
     view_set_draw_callback(app->byte_distribution_view, flipper_rng_byte_distribution_draw_callback);
     view_set_input_callback(app->byte_distribution_view, flipper_rng_byte_distribution_input_callback);
+    view_set_enter_callback(app->byte_distribution_view, flipper_rng_byte_distribution_enter_callback);
     view_set_previous_callback(app->byte_distribution_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewByteDistribution, app->byte_distribution_view);
     
