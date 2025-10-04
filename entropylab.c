@@ -351,9 +351,9 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->entropy_sources = EntropySourceAll;
     app->state->output_mode = OutputModeUART;  // Default to UART
     app->state->mixing_mode = MixingModeHardware;  // Default to HW AES
-    app->state->wordlist_type = PassphraseListEFFLong;  // Default to EFF Long wordlist
-    app->state->poll_interval_ms = 10;
-    app->state->visual_refresh_ms = 200;  // Default 200ms visual refresh rate
+    app->state->wordlist_type = PassphraseListEFFLong;  // Default to EFF wordlist
+    app->state->poll_interval_ms = 1;  // Maximum performance - 1ms polling
+    app->state->visual_refresh_ms = 500;  // Smooth, easy-to-watch visualization
     app->state->is_running = false;
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
