@@ -344,7 +344,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     }
     app->state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->state->entropy_sources = EntropySourceAll;
-    app->state->output_mode = OutputModeUART;  // Default to UART
+    app->state->output_mode = OutputModeNone;  // Default to None (visualization only)
     app->state->mixing_mode = MixingModeHardware;  // Default to HW AES
     app->state->wordlist_type = PassphraseListEFFLong;  // Default to EFF wordlist
     app->state->poll_interval_ms = 1;  // Maximum performance - 1ms polling

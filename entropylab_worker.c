@@ -110,19 +110,28 @@ int32_t flipper_rng_worker_thread(void* context) {
         
         // Output data when we have some - OPTIMIZED BUFFER SIZES
         bool should_output = false;
-        if(app->state->output_mode == OutputModeUART) {
+        if(app->state->output_mode == OutputModeNone) {
+            // No output mode - just generate for visualization
+            // Reset buffer when full to avoid overflow
+            should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
+        } else if(app->state->output_mode == OutputModeUART) {
             // For UART, send larger chunks less frequently (every 128 bytes)
             // This reduces overhead while maintaining good latency
             should_output = (buffer_pos >= 128);
         } else {
-            // For USB and File modes, wait for full buffer
+            // For File mode, wait for full buffer
             should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
         }
         
         // Output data if needed
         if(should_output) {
             // Output data based on selected mode
-            if(app->state->output_mode == OutputModeUART) {
+            if(app->state->output_mode == OutputModeNone) {
+                // No output - just reset buffer
+                buffer_pos = 0;
+                FURI_LOG_D(TAG, "Buffer reset (no output), %lu total bytes generated", 
+                           app->state->bytes_generated);
+            } else if(app->state->output_mode == OutputModeUART) {
                 // Send to GPIO UART (pins 13/14) using DMA optimization
                 if(app->state->serial_handle) {
                     // Try DMA-based transmission first for better performance

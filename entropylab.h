@@ -27,6 +27,7 @@ typedef enum {
 
 // Output mode - Visualization is always available, not an exclusive output mode
 typedef enum {
+    OutputModeNone,     // No output (visualization only)
     OutputModeUART,
     OutputModeFile,
 } OutputMode;

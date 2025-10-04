@@ -36,6 +36,7 @@ static const char* entropy_source_names[] = {
 };
 
 static const char* output_mode_names[] = {
+    "None",
     "UART",
     "File",
 };
