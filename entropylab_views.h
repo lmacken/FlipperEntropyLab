@@ -27,26 +27,6 @@ typedef struct {
     uint32_t ir_display_value;
 } FlipperRngVisualizationModel;
 
-// Test model
-typedef struct {
-    bool is_testing;
-    size_t bytes_collected;
-    size_t bytes_needed;
-    float test_progress;
-    
-    // Test configuration
-    uint8_t selected_size;  // 0=4KB, 1=8KB, 2=16KB, 3=32KB, 4=64KB, 5=128KB
-    
-    // Test results
-    bool test_complete;
-    float chi_square_result;
-    float bit_frequency_result;
-    float runs_test_result;
-    float overall_score;
-    uint32_t actual_chi_square;  // Store actual value for display
-    char result_text[256];
-} FlipperRngTestModel;
-
 // Configuration callbacks
 void flipper_rng_setup_config_view(FlipperRngApp* app);
 
@@ -72,13 +52,6 @@ void flipper_rng_wordlist_changed(VariableItem* item);
 
 // Visualization callbacks are declared in flipper_rng.h
 void flipper_rng_visualization_update(FlipperRngApp* app, uint8_t* data, size_t length);
-
-// Test view callbacks
-void flipper_rng_test_draw_callback(Canvas* canvas, void* context);
-bool flipper_rng_test_input_callback(InputEvent* event, void* context);
-void flipper_rng_test_enter_callback(void* context);
-void flipper_rng_test_exit_callback(void* context);
-void flipper_rng_test_update(FlipperRngApp* app, const uint8_t* data, size_t length);
 
 // Byte distribution view callbacks
 void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context);

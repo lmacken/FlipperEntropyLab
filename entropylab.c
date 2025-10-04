@@ -146,7 +146,6 @@ typedef enum {
     FlipperRngMenuVisualization,
     FlipperRngMenuByteDistribution,  // New: Byte Distribution
     FlipperRngMenuSourceStats,        // New: Source comparison
-    FlipperRngMenuTest,
     FlipperRngMenuDiceware,           // New: Passphrase generator
     FlipperRngMenuAbout,
     FlipperRngMenuDonate,             // New: Donation QR code
@@ -297,10 +296,6 @@ void flipper_rng_menu_callback(void* context, uint32_t index) {
         view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewSourceStats);
         break;
         
-    case FlipperRngMenuTest:
-        FURI_LOG_I(TAG, "Test RNG Quality selected");
-        view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewTest);
-        break;
         
     case FlipperRngMenuDiceware:
         FURI_LOG_I(TAG, "Passphrase Generator selected");
@@ -368,12 +363,6 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     app->state->entropy_rate = 0.0f;
     app->state->adc_handle = NULL;
     app->state->serial_handle = NULL;
-    app->state->test_buffer = NULL;
-    app->state->test_buffer_size = 0;
-    app->state->test_buffer_pos = 0;
-    app->state->test_running = false;
-    app->state->test_started_worker = false;
-    app->state->test_result = 0.0f;
     
     // Clear entropy pool with initial random data
     furi_hal_random_fill_buf(app->state->entropy_pool, RNG_POOL_SIZE);
@@ -414,7 +403,6 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     submenu_add_item(app->submenu, "Visualize", FlipperRngMenuVisualization, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Distribution", FlipperRngMenuByteDistribution, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Sources", FlipperRngMenuSourceStats, flipper_rng_menu_callback, app);
-    submenu_add_item(app->submenu, "Test Quality", FlipperRngMenuTest, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Passphrase Generator", FlipperRngMenuDiceware, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "About", FlipperRngMenuAbout, flipper_rng_menu_callback, app);
     submenu_add_item(app->submenu, "Donate", FlipperRngMenuDonate, flipper_rng_menu_callback, app);
@@ -468,16 +456,6 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_set_previous_callback(app->source_stats_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewSourceStats, app->source_stats_view);
     
-    // Test view
-    app->test_view = view_alloc();
-    view_set_context(app->test_view, app);
-    view_allocate_model(app->test_view, ViewModelTypeLocking, sizeof(FlipperRngTestModel));
-    view_set_draw_callback(app->test_view, flipper_rng_test_draw_callback);
-    view_set_input_callback(app->test_view, flipper_rng_test_input_callback);
-    view_set_enter_callback(app->test_view, flipper_rng_test_enter_callback);
-    view_set_exit_callback(app->test_view, flipper_rng_test_exit_callback);
-    view_set_previous_callback(app->test_view, flipper_rng_back_callback);
-    view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewTest, app->test_view);
     
     // Passphrase generator view
     app->diceware_view = flipper_rng_passphrase_view_alloc(app);
@@ -552,7 +530,6 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewVisualization);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewByteDistribution);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewSourceStats);
-    view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewTest);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewDiceware);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewAbout);
     view_dispatcher_remove_view(app->view_dispatcher, FlipperRngViewDonate);
@@ -565,7 +542,6 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     view_free(app->visualization_view);
     view_free(app->byte_distribution_view);
     view_free(app->source_stats_view);
-    view_free(app->test_view);
     flipper_rng_passphrase_view_free(app->diceware_view);
     flipper_rng_about_view_free(app->about_view);
     flipper_rng_donate_view_free(app->donate_view);
@@ -588,10 +564,6 @@ void flipper_rng_app_free(FlipperRngApp* app) {
     
     
     // Free test buffer if allocated
-    if(app->state->test_buffer) {
-        free(app->state->test_buffer);
-        app->state->test_buffer = NULL;
-    }
     
     // Free state
     furi_mutex_free(app->state->mutex);

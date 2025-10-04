@@ -46,7 +46,6 @@ typedef enum {
     FlipperRngViewVisualization,
     FlipperRngViewByteDistribution,  // New: Byte Distribution
     FlipperRngViewSourceStats,       // New: Entropy source comparison
-    FlipperRngViewTest,
     FlipperRngViewDiceware,          // New: Passphrase generator
     FlipperRngViewAbout,             // About view (simplified)
     FlipperRngViewDonate,            // New: Donation QR code view
@@ -67,13 +66,6 @@ typedef struct {
     size_t entropy_pool_pos;
     uint32_t bytes_generated;
     
-    // Test data
-    uint8_t* test_buffer;
-    size_t test_buffer_size;
-    size_t test_buffer_pos;
-    bool test_running;
-    bool test_started_worker;  // Track if test started the worker
-    float test_result;
     
     // Hardware handles
     FuriHalAdcHandle* adc_handle;
@@ -117,7 +109,6 @@ typedef struct {
     View* visualization_view;
     View* byte_distribution_view;  // New: Byte Distribution view
     View* source_stats_view;       // New: Entropy source stats view
-    View* test_view;
     View* diceware_view;           // New: Passphrase generator view
     View* about_view;              // About view (simplified)
     View* donate_view;             // New: Donation QR code view

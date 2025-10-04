@@ -116,8 +116,8 @@ int32_t flipper_rng_worker_thread(void* context) {
             should_output = (buffer_pos >= OUTPUT_BUFFER_SIZE);
         }
         
-        // Skip output if we're running a test - test collects its own data
-        if(should_output && !app->state->test_running) {
+        // Output data if needed
+        if(should_output) {
             // Output data based on selected mode
             if(app->state->output_mode == OutputModeUART) {
                 // Send to GPIO UART (pins 13/14) using DMA optimization
@@ -152,11 +152,6 @@ int32_t flipper_rng_worker_thread(void* context) {
             
             buffer_pos = 0;
             FURI_LOG_I(TAG, "Buffer output, %lu total bytes generated", 
-                       app->state->bytes_generated);
-        } else if(should_output && app->state->test_running) {
-            // During test, just reset buffer without outputting
-            buffer_pos = 0;
-            FURI_LOG_D(TAG, "Buffer reset during test, %lu total bytes generated", 
                        app->state->bytes_generated);
         }
         
@@ -211,10 +206,6 @@ int32_t flipper_rng_worker_thread(void* context) {
             }
         }
         
-        // Update test if test is running  
-        if(app->state->test_running && buffer_pos > 0) {
-            flipper_rng_test_update(app, output_buffer, buffer_pos);
-        }
         
         
         counter++;
