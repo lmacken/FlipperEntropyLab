@@ -6,6 +6,26 @@
 
 #define TAG "FlipperRNG"
 
+// Helper function to format byte counts in human-readable format
+static void format_bytes(char* buffer, size_t buffer_size, uint32_t bytes) {
+    if(bytes < 1024) {
+        // Less than 1 KB - show raw bytes
+        snprintf(buffer, buffer_size, "%lu B", bytes);
+    } else if(bytes < 1024 * 1024) {
+        // 1 KB to 1 MB - show KB with 1 decimal
+        float kb = (float)bytes / 1024.0f;
+        snprintf(buffer, buffer_size, "%.1f KB", (double)kb);
+    } else if(bytes < 1024 * 1024 * 100) {
+        // 1 MB to 100 MB - show MB with 2 decimals
+        float mb = (float)bytes / (1024.0f * 1024.0f);
+        snprintf(buffer, buffer_size, "%.2f MB", (double)mb);
+    } else {
+        // 100+ MB - show MB with 1 decimal
+        float mb = (float)bytes / (1024.0f * 1024.0f);
+        snprintf(buffer, buffer_size, "%.1f MB", (double)mb);
+    }
+}
+
 // Configuration options
 static const char* entropy_source_names[] = {
     "All",
@@ -260,9 +280,11 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             canvas_draw_str(canvas, 2, 20, "Status: Generating");
             
             
-            // Bytes generated
+            // Bytes generated with human-readable format
             char buffer[32];
-            snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
+            char bytes_str[24];
+            format_bytes(bytes_str, sizeof(bytes_str), model->bytes_generated);
+            snprintf(buffer, sizeof(buffer), "Bytes: %s", bytes_str);
             canvas_draw_str(canvas, 2, 30, buffer);
             
             // Random data visualization as pixels
@@ -644,10 +666,12 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
     canvas_draw_str(canvas, 2, 10, "Byte Distribution");
     
     if(model->is_running) {
-        // Show total bytes analyzed on second line
+        // Show total bytes analyzed on second line with human-readable format
         canvas_set_font(canvas, FontSecondary);
         char buffer[48];
-        snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
+        char bytes_str[24];
+        format_bytes(bytes_str, sizeof(bytes_str), model->bytes_generated);
+        snprintf(buffer, sizeof(buffer), "Bytes: %s", bytes_str);
         canvas_draw_str(canvas, 2, 20, buffer);
         
         // Calculate statistics
