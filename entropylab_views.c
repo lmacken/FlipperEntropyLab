@@ -340,6 +340,150 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
             canvas_draw_str(canvas, 30, 30, "Start generator");
             canvas_draw_str(canvas, 40, 40, "for visualization");
         }
+    } else if(model->viz_mode == 2) {
+        // MODE 2: Bit Rain (Matrix style)
+        if(model->is_running) {
+            // Draw falling "rain" of bits
+            for(int col = 0; col < 16; col++) {
+                int x = col * 8;
+                // Use 8 bytes for each column
+                for(int row = 0; row < 8; row++) {
+                    uint8_t byte = model->random_data[col * 8 + row];
+                    int y = row * 8;
+                    
+                    // Draw bits as dots with varying intensity (simulate falling)
+                    for(int bit = 0; bit < 8; bit++) {
+                        if(byte & (1 << bit)) {
+                            int dot_y = y + bit;
+                            if(dot_y < 64) {
+                                canvas_draw_dot(canvas, x + (col % 8), dot_y);
+                                // Add trail effect
+                                if(dot_y > 0 && (row % 2 == 0)) {
+                                    canvas_draw_dot(canvas, x + (col % 8), dot_y - 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Mode indicator
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 10, "Bit Rain");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 30, 30, "Start generator");
+        }
+    } else if(model->viz_mode == 3) {
+        // MODE 3: Spiral Galaxy
+        if(model->is_running) {
+            int center_x = 64;
+            int center_y = 32;
+            
+            // Draw entropy as a spiral pattern
+            for(int i = 0; i < 128; i++) {
+                uint8_t byte = model->random_data[i];
+                float angle = (float)i * 0.3f + (byte & 0x0F) * 0.1f;
+                float radius = (float)i * 0.25f;
+                
+                int x = center_x + (int)(cosf(angle) * radius);
+                int y = center_y + (int)(sinf(angle) * radius * 0.6f);  // Compress Y
+                
+                if(x >= 0 && x < 128 && y >= 0 && y < 64) {
+                    // Draw based on byte value intensity
+                    if(byte & 0x80) canvas_draw_dot(canvas, x, y);
+                    if(byte & 0x40 && i > 0) {
+                        // Connect to previous point
+                        float prev_angle = (float)(i-1) * 0.3f;
+                        float prev_radius = (float)(i-1) * 0.25f;
+                        int prev_x = center_x + (int)(cosf(prev_angle) * prev_radius);
+                        int prev_y = center_y + (int)(sinf(prev_angle) * prev_radius * 0.6f);
+                        canvas_draw_line(canvas, prev_x, prev_y, x, y);
+                    }
+                }
+            }
+            
+            // Mode indicator
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 10, "Spiral");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 30, 30, "Start generator");
+        }
+    } else if(model->viz_mode == 4) {
+        // MODE 4: Waveform (Oscilloscope style)
+        if(model->is_running) {
+            // Draw entropy as audio-style waveform
+            int baseline_y = 32;
+            
+            for(int x = 0; x < 127; x++) {
+                uint8_t byte1 = model->random_data[x];
+                uint8_t byte2 = model->random_data[x + 1];
+                
+                // Map byte values to Y position
+                int y1 = baseline_y + ((int8_t)byte1 / 4);  // -32 to +32
+                int y2 = baseline_y + ((int8_t)byte2 / 4);
+                
+                // Clamp to screen
+                y1 = MAX(0, MIN(63, y1));
+                y2 = MAX(0, MIN(63, y2));
+                
+                // Draw line segment
+                canvas_draw_line(canvas, x, y1, x + 1, y2);
+            }
+            
+            // Draw baseline
+            for(int x = 0; x < 128; x += 4) {
+                canvas_draw_dot(canvas, x, baseline_y);
+            }
+            
+            // Mode indicator
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 10, "Waveform");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 30, 30, "Start generator");
+        }
+    } else if(model->viz_mode == 5) {
+        // MODE 5: Particle Field
+        if(model->is_running) {
+            // Draw entropy as particles moving in field
+            for(int i = 0; i < 64; i++) {
+                uint8_t byte = model->random_data[i * 2];
+                uint8_t byte2 = model->random_data[i * 2 + 1];
+                
+                // Use bytes for X,Y coordinates
+                int x = byte % 128;
+                int y = byte2 % 64;
+                
+                // Draw particle
+                canvas_draw_dot(canvas, x, y);
+                
+                // Add velocity lines based on next bytes
+                if(i < 63) {
+                    uint8_t dx = model->random_data[(i * 2 + 2) % 128];
+                    uint8_t dy = model->random_data[(i * 2 + 3) % 128];
+                    
+                    int x2 = x + ((int8_t)(dx % 16) - 8) / 2;
+                    int y2 = y + ((int8_t)(dy % 16) - 8) / 2;
+                    
+                    x2 = MAX(0, MIN(127, x2));
+                    y2 = MAX(0, MIN(63, y2));
+                    
+                    // Draw motion trail
+                    if((byte & 0x03) == 0) {
+                        canvas_draw_line(canvas, x, y, x2, y2);
+                    }
+                }
+            }
+            
+            // Mode indicator
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 2, 10, "Particles");
+        } else {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 30, 30, "Start generator");
+        }
     }
 }
 
@@ -362,9 +506,9 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
                     app->visualization_view,
                     FlipperRngVisualizationModel* model,
                     {
-                        uint8_t old_mode = model->viz_mode;
-                        model->viz_mode = (model->viz_mode + 1) % 2;
-                        // Reset walk position when switching to mode 1
+                                uint8_t old_mode = model->viz_mode;
+                        model->viz_mode = (model->viz_mode + 1) % 6;  // 6 visualization modes
+                        // Reset walk position when switching modes
                         if(model->viz_mode == 1) {
                             model->walk_x = 64;
                             model->walk_y = 32;
