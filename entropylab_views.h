@@ -35,7 +35,7 @@ typedef struct {
     float test_progress;
     
     // Test configuration
-    uint8_t selected_size;  // 0=16KB, 1=32KB, 2=64KB, 3=128KB
+    uint8_t selected_size;  // 0=4KB, 1=8KB, 2=16KB, 3=32KB, 4=64KB, 5=128KB
     
     // Test results
     bool test_complete;
