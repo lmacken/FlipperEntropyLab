@@ -1036,41 +1036,88 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
     if(model->is_running) {
         // Show total bytes analyzed on second line
         canvas_set_font(canvas, FontSecondary);
-        char buffer[32];
+        char buffer[48];
         snprintf(buffer, sizeof(buffer), "Bytes: %lu", model->bytes_generated);
         canvas_draw_str(canvas, 2, 20, buffer);
         
-        // Find max value for scaling
-        uint32_t max_val = 1;
+        // Calculate statistics
+        uint32_t total_bytes = model->bytes_generated;
+        if(total_bytes == 0) total_bytes = 1; // Avoid division by zero
+        
+        // Expected value per bin (perfectly uniform distribution)
+        uint32_t expected_per_bin = total_bytes / 16;
+        if(expected_per_bin == 0) expected_per_bin = 1;
+        
+        // Calculate chi-squared statistic for goodness of fit
+        float chi_squared = 0.0f;
         for(int i = 0; i < 16; i++) {
-            if(model->histogram[i] > max_val) {
-                max_val = model->histogram[i];
-            }
+            int32_t diff = (int32_t)model->histogram[i] - (int32_t)expected_per_bin;
+            chi_squared += ((float)diff * (float)diff) / (float)expected_per_bin;
         }
         
-        // Draw histogram bars
+        // Find min and max for "zoomed" scaling (show small differences)
+        uint32_t min_val = model->histogram[0];
+        uint32_t max_val = model->histogram[0];
+        for(int i = 1; i < 16; i++) {
+            if(model->histogram[i] < min_val) min_val = model->histogram[i];
+            if(model->histogram[i] > max_val) max_val = model->histogram[i];
+        }
+        
+        // Use a zoomed range to amplify small differences
+        uint32_t range = max_val - min_val;
+        if(range < expected_per_bin / 20) {
+            // Very uniform - use narrow range for zoom
+            range = expected_per_bin / 20;
+        }
+        if(range == 0) range = 1;
+        
+        // Draw histogram bars with zoomed scaling
         int bar_width = 7;
         int bar_spacing = 1;
-        int max_height = 28;  // Reduced height to make room for labels
-        int base_y = 52;      // Moved up to make room for labels below
+        int max_height = 20;
+        int base_y = 45;
         
         for(int i = 0; i < 16; i++) {
-            int bar_height = (model->histogram[i] * max_height) / max_val;
+            // Calculate bar height relative to min (zoomed view)
+            int32_t value_above_min = (int32_t)model->histogram[i] - (int32_t)min_val;
+            int bar_height = (value_above_min * max_height) / range;
+            if(bar_height < 0) bar_height = 0;
+            if(bar_height > max_height) bar_height = max_height;
+            
+            int x = 2 + i * (bar_width + bar_spacing);
+            
+            // Draw bar
             if(bar_height > 0) {
-                int x = 2 + i * (bar_width + bar_spacing);
-                // Draw bar
                 canvas_draw_box(canvas, x, base_y - bar_height, bar_width, bar_height);
+            }
+            
+            // Draw expected line (baseline) - dashed
+            if(i % 2 == 0) {
+                canvas_draw_dot(canvas, x + bar_width/2, base_y - max_height/2);
             }
         }
         
-        // Draw axis
+        // Draw baseline
         canvas_draw_line(canvas, 0, base_y + 1, 127, base_y + 1);
         
-        // Labels for bins - positioned below axis with proper spacing
+        // Labels for bins
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 62, "0");
-        canvas_draw_str(canvas, 58, 62, "7F");
-        canvas_draw_str(canvas, 112, 62, "FF");
+        canvas_draw_str(canvas, 2, 54, "0");
+        canvas_draw_str(canvas, 58, 54, "7F");
+        canvas_draw_str(canvas, 112, 54, "FF");
+        
+        // Quality metrics
+        canvas_draw_str(canvas, 2, 62, "Quality:");
+        
+        // Chi-squared p-value interpretation (15 degrees of freedom)
+        // Good if chi-squared < 25 (p > 0.05), Excellent if < 22 (p > 0.10)
+        const char* quality = "Perfect";
+        if(chi_squared > 30) quality = "Poor";
+        else if(chi_squared > 25) quality = "Fair";
+        else if(chi_squared > 22) quality = "Good";
+        
+        snprintf(buffer, sizeof(buffer), "%s (X2=%.1f)", quality, (double)chi_squared);
+        canvas_draw_str(canvas, 42, 62, buffer);
     } else {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 20, 35, "Start generator");
