@@ -367,9 +367,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
                 }
             }
             
-            // Mode indicator
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 10, "Bit Rain");
+            // Clean - no title overlay
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 30, 30, "Start generator");
@@ -403,9 +401,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
                 }
             }
             
-            // Mode indicator
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 10, "Spiral");
+            // Clean - no title overlay
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 30, 30, "Start generator");
@@ -437,9 +433,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
                 canvas_draw_dot(canvas, x, baseline_y);
             }
             
-            // Mode indicator
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 10, "Waveform");
+            // Clean - no title overlay
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 30, 30, "Start generator");
@@ -477,9 +471,7 @@ void flipper_rng_visualization_draw_callback(Canvas* canvas, void* context) {
                 }
             }
             
-            // Mode indicator
-            canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 2, 10, "Particles");
+            // Clean - no title overlay
         } else {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 30, 30, "Start generator");
@@ -498,15 +490,15 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
             return false; // Let view dispatcher handle back
         }
         
-        if(event->key == InputKeyOk) {
+        if(event->key == InputKeyOk || event->key == InputKeyRight) {
             if(app->state->is_running) {
-                // Toggle visualization mode between 0 and 1
-                FURI_LOG_I(TAG, "OK button pressed - toggling visualization mode");
+                // Cycle forward through visualization modes
+                FURI_LOG_I(TAG, "Next visualization mode");
                 with_view_model(
                     app->visualization_view,
                     FlipperRngVisualizationModel* model,
                     {
-                                uint8_t old_mode = model->viz_mode;
+                        uint8_t old_mode = model->viz_mode;
                         model->viz_mode = (model->viz_mode + 1) % 6;  // 6 visualization modes
                         // Reset walk position when switching modes
                         if(model->viz_mode == 1) {
@@ -518,10 +510,36 @@ bool flipper_rng_visualization_input_callback(InputEvent* event, void* context) 
                     true
                 );
                 consumed = true;
+            } else {
+                FURI_LOG_I(TAG, "Visualization: Button pressed while stopped, going back");
+                return false; // Return to menu when pressed while stopped
             }
-        } else {
-            FURI_LOG_I(TAG, "Visualization: OK pressed while stopped, going back");
-            return false; // Return to menu when OK is pressed while stopped
+        } else if(event->key == InputKeyLeft) {
+            if(app->state->is_running) {
+                // Cycle backward through visualization modes
+                FURI_LOG_I(TAG, "Previous visualization mode");
+                with_view_model(
+                    app->visualization_view,
+                    FlipperRngVisualizationModel* model,
+                    {
+                        uint8_t old_mode = model->viz_mode;
+                        // Go backward (with wraparound)
+                        if(model->viz_mode == 0) {
+                            model->viz_mode = 5;  // Wrap to last mode
+                        } else {
+                            model->viz_mode = model->viz_mode - 1;
+                        }
+                        // Reset walk position when switching modes
+                        if(model->viz_mode == 1) {
+                            model->walk_x = 64;
+                            model->walk_y = 32;
+                        }
+                        FURI_LOG_I(TAG, "Mode changed: %d -> %d", old_mode, model->viz_mode);
+                    },
+                    true
+                );
+                consumed = true;
+            }
         }
     }
     
