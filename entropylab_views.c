@@ -659,31 +659,41 @@ void flipper_rng_test_draw_callback(Canvas* canvas, void* context) {
                  (unsigned)model->bytes_collected, (unsigned)model->bytes_needed);
         canvas_draw_str(canvas, 2, 44, buffer);
     } else if(model->test_complete) {
-        // Show test results
-        canvas_draw_str(canvas, 2, 22, "Test Complete!");
+        // Show test results - NIST-style pass/fail
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "Tested %u bytes", (unsigned)model->bytes_needed);
+        canvas_draw_str(canvas, 2, 22, buffer);
         
-        // Overall score with visual indicator
-        char score_str[32];
-        snprintf(score_str, sizeof(score_str), "Overall: %.1f%%", (double)(model->overall_score * 100));
-        canvas_draw_str(canvas, 2, 34, score_str);
+        // Overall assessment
+        canvas_set_font(canvas, FontPrimary);
+        if(model->overall_score >= 0.95f) {
+            canvas_draw_str(canvas, 2, 34, "Quality: EXCELLENT");
+        } else if(model->overall_score >= 0.85f) {
+            canvas_draw_str(canvas, 2, 34, "Quality: GOOD");
+        } else if(model->overall_score >= 0.70f) {
+            canvas_draw_str(canvas, 2, 34, "Quality: FAIR");
+        } else {
+            canvas_draw_str(canvas, 2, 34, "Quality: POOR");
+        }
         
-        // Quality bar for overall score
-        canvas_draw_frame(canvas, 60, 30, 66, 6);
-        int score_width = (int)(model->overall_score * 64);
-        canvas_draw_box(canvas, 61, 31, score_width, 4);
-        
-        // Individual test results
+        // Individual test results - show as PASS/FAIL
         canvas_set_font(canvas, FontSecondary);
         char result[64];
         
-        snprintf(result, sizeof(result), "Chi²: %.0f%% (%lu, exp:255)", 
-                 (double)(model->chi_square_result * 100), (unsigned long)model->actual_chi_square);
+        // Chi-square test (byte distribution uniformity)
+        snprintf(result, sizeof(result), "Chi²: %s (X²=%.0f)", 
+                 model->chi_square_result >= 0.9f ? "PASS" : "FAIL",
+                 (double)model->actual_chi_square);
         canvas_draw_str(canvas, 2, 44, result);
         
-        snprintf(result, sizeof(result), "Bit Freq: %.1f%%", (double)(model->bit_frequency_result * 100));
+        // Bit frequency test (balance of 0s and 1s)
+        snprintf(result, sizeof(result), "Bit Balance: %s", 
+                 model->bit_frequency_result >= 0.9f ? "PASS" : "FAIL");
         canvas_draw_str(canvas, 2, 52, result);
         
-        snprintf(result, sizeof(result), "Runs: %.1f%%", (double)(model->runs_test_result * 100));
+        // Runs test (no long sequences of same bit)
+        snprintf(result, sizeof(result), "Runs Test: %s", 
+                 model->runs_test_result >= 0.9f ? "PASS" : "FAIL");
         canvas_draw_str(canvas, 2, 60, result);
     } else {
         // Initial state - show size selection
