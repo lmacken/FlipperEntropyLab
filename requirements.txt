@@ -1,2 +1,2 @@
-pyserial
-rich
+pyserial>=3.5
+tqdm>=4.65.0

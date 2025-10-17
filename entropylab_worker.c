@@ -9,14 +9,14 @@
 #include <math.h>
 #include <string.h>
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 #define OUTPUT_BUFFER_SIZE 256  // Reduced to save stack space and prevent overflow
 
-// Worker thread - Version 3: Multi-source entropy collection
+// Worker thread - Multi-source entropy collection with always-on visualization
 int32_t flipper_rng_worker_thread(void* context) {
     FlipperRngApp* app = context;
     
-    FURI_LOG_I(TAG, "Worker thread started - V4: Multi-source entropy with always-on visualization");
+    FURI_LOG_I(TAG, "Worker thread started");
     FURI_LOG_I(TAG, "Output mode: %d (0=USB, 1=UART, 2=File) - Visualization always available", app->state->output_mode);
     FURI_LOG_I(TAG, "Entropy sources: 0x%02lX", app->state->entropy_sources);
     
@@ -35,16 +35,32 @@ int32_t flipper_rng_worker_thread(void* context) {
     uint32_t mix_counter = 0;
     uint32_t total_entropy_bits = 0;
     
-    // Record start time for rate calculation
+    // Record start time for rate calculation and entropy readiness
     app->state->start_time = furi_get_tick();
+    app->state->entropy_collection_start = furi_get_tick();
+    app->state->entropy_ready = false;  // Not ready yet
+    
+    // Minimum entropy collection time: 2 seconds
+    // This ensures we have environmental entropy from SubGHz and IR sources
+    const uint32_t MIN_ENTROPY_COLLECTION_MS = 2000;
     
     FURI_LOG_I(TAG, "Worker entering main loop, is_running=%d", app->state->is_running);
+    FURI_LOG_I(TAG, "Entropy will be ready for passphrases after %lu ms", MIN_ENTROPY_COLLECTION_MS);
     
     while(app->state->is_running) {
+        // Check if minimum entropy collection time has elapsed
+        if(!app->state->entropy_ready) {
+            uint32_t collection_time = furi_get_tick() - app->state->entropy_collection_start;
+            if(collection_time >= MIN_ENTROPY_COLLECTION_MS) {
+                app->state->entropy_ready = true;
+                FURI_LOG_I(TAG, "Entropy ready! Collected for %lu ms, passphrases can now be generated", collection_time);
+            }
+        }
+        
         // Log periodically
         if(counter % 100 == 0) {
-            FURI_LOG_I(TAG, "Worker running: cycle=%lu, bytes=%lu, is_running=%d", 
-                       counter, app->state->bytes_generated, app->state->is_running);
+            FURI_LOG_I(TAG, "Worker running: cycle=%lu, bytes=%lu, entropy_ready=%d", 
+                       counter, app->state->bytes_generated, app->state->entropy_ready);
             
             // Calculate entropy rate
             uint32_t elapsed_ms = furi_get_tick() - app->state->start_time;
@@ -80,9 +96,9 @@ int32_t flipper_rng_worker_thread(void* context) {
         // No need to poll here anymore - entropy is added continuously
         
         
-        // Mix the entropy pool periodically - less frequent with better mixing
+        // Mix the entropy pool periodically using configurable frequency
         mix_counter++;
-        if(mix_counter >= 64) {  // Increased from 32 since mixing is more efficient now
+        if(mix_counter >= app->state->mix_frequency) {
             flipper_rng_mix_entropy_pool(app->state);
             mix_counter = 0;
         }

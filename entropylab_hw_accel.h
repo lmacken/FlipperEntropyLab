@@ -25,9 +25,6 @@ void flipper_rng_hw_xor_mix(uint32_t* dest, const uint32_t* src, size_t words);
 bool flipper_rng_hw_uart_tx_dma(FuriHalSerialHandle* handle, const uint8_t* data, size_t size);
 void flipper_rng_hw_uart_tx_bulk(FuriHalSerialHandle* handle, const uint8_t* data, size_t size);
 
-// Fast CRC32
-uint32_t flipper_rng_hw_crc32(const uint8_t* data, size_t size);
-
 // High-resolution timing
 uint32_t flipper_rng_hw_get_cycles(void);
 uint32_t flipper_rng_hw_cycles_elapsed(uint32_t start);

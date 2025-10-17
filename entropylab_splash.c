@@ -4,7 +4,7 @@
 #include <gui/view.h>
 #include <gui/elements.h>
 
-#define TAG "FlipperRNG_Splash"
+#define TAG "EntropyLab_Splash"
 #define SPLASH_DURATION_MS 3000
 #define ANIMATION_TICK_MS 50
 #define MAX_PARTICLES 20

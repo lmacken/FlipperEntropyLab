@@ -3,11 +3,17 @@
 #include "entropylab_passphrase.h"
 #include "entropylab_passphrase_sd.h"
 #include "entropylab_entropy.h"
+#include "entropylab_secure.h"
+#include "entropylab_log.h"
 #include <gui/elements.h>
 #include <string.h>
 #include <furi.h>
 
-#define TAG "FlipperRNG-PassphraseView"
+#define TAG "EntropyLab-PassphraseView"
+
+// Cooldown period between passphrase generations (milliseconds)
+// Ensures entropy pool has time to refresh and prevents rapid-fire attacks
+#define PASSPHRASE_GENERATION_COOLDOWN_MS 100
 
 // Forward declarations for entropy worker management
 static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app);
@@ -32,6 +38,8 @@ typedef struct {
     bool is_loading;       // Whether we're loading a wordlist
     float load_progress;   // Loading progress (0.0 to 1.0)
     char load_status[64];  // Loading status message
+    bool started_worker;   // Whether this view started the entropy worker
+    FuriThread* index_worker_thread;  // Handle to index building thread (for cleanup)
 } FlipperRngPassphraseModel;
 
 // Progress callback for index building
@@ -55,7 +63,7 @@ static int32_t index_build_worker(void* context) {
     FlipperRngApp* app = worker_ctx->app;
     PassphraseSDContext* sd_context = worker_ctx->sd_context;
     
-    FURI_LOG_I(TAG, "Starting async index building...");
+    LOG_D(TAG, "Starting async index building...");
     
     // Build the index with progress updates
     bool success = flipper_rng_passphrase_sd_build_index(sd_context, index_build_progress_callback, app);
@@ -68,18 +76,22 @@ static int32_t index_build_worker(void* context) {
             model->is_loading = false;
             if(success) {
                 snprintf(model->load_status, sizeof(model->load_status), "Ready! %d words indexed", sd_context->word_count);
-                FURI_LOG_I(TAG, "Index built successfully");
+                LOG_D(TAG, "Index built successfully");
             } else {
                 snprintf(model->load_status, sizeof(model->load_status), "Index failed - using fallback");
-                FURI_LOG_W(TAG, "Index building failed, will use slower access");
+                LOG_W(TAG, "Index building failed, will use slower access");
             }
         },
         true
     );
     
     // Now that wordlist is ready, start background entropy collection
-    FURI_LOG_I(TAG, "Wordlist ready, starting background entropy collection...");
+    LOG_D(TAG, "Wordlist ready, starting background entropy collection...");
     flipper_rng_passphrase_start_entropy_worker(app);
+    
+    // Free the worker context
+    free(worker_ctx);
+    LOG_D(TAG, "Index build worker context freed");
     
     return 0;
 }
@@ -88,18 +100,25 @@ static int32_t index_build_worker(void* context) {
 static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app) {
     // Only start if not already running
     if(app->state->is_running) {
-        FURI_LOG_D(TAG, "Entropy worker already running");
+        LOG_D(TAG, "Entropy worker already running (started elsewhere)");
+        // Mark that we didn't start it
+        with_view_model(
+            app->diceware_view,
+            FlipperRngPassphraseModel* model,
+            { model->started_worker = false; },
+            false
+        );
         return;
     }
     
-    FURI_LOG_I(TAG, "Starting background entropy collection for passphrase generation...");
+    LOG_D(TAG, "Starting background entropy collection for passphrase generation...");
     
     // Set LED to blinking green during entropy collection
     flipper_rng_set_led_generating(app);
     
     // Ensure worker thread is stopped before starting
     if(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
-        FURI_LOG_D(TAG, "Waiting for previous worker to stop...");
+        LOG_D(TAG, "Waiting for previous worker to stop...");
         app->state->is_running = false;
         furi_thread_join(app->worker_thread);
     }
@@ -116,20 +135,42 @@ static void flipper_rng_passphrase_start_entropy_worker(FlipperRngApp* app) {
     app->state->is_running = true;
     furi_thread_start(app->worker_thread);
     
+    // Mark that WE started the worker
+    with_view_model(
+        app->diceware_view,
+        FlipperRngPassphraseModel* model,
+        { model->started_worker = true; },
+        false
+    );
+    
     // Start IR worker if IR entropy is enabled
     // This is handled by the main app, but we need to access the IR worker functions
     // For now, let's just log that we'd start it
-    FURI_LOG_D(TAG, "Background entropy worker started for passphrase generation");
+    LOG_D(TAG, "Background entropy worker started for passphrase generation");
 }
 
 // Stop entropy worker when leaving passphrase view
 static void flipper_rng_passphrase_stop_entropy_worker(FlipperRngApp* app) {
-    if(!app->state->is_running) {
-        FURI_LOG_D(TAG, "Entropy worker not running");
+    // Check if we started the worker
+    bool should_stop = false;
+    with_view_model(
+        app->diceware_view,
+        FlipperRngPassphraseModel* model,
+        { should_stop = model->started_worker; },
+        false
+    );
+    
+    if(!should_stop) {
+        LOG_D(TAG, "Entropy worker was started elsewhere, not stopping it");
         return;
     }
     
-    FURI_LOG_I(TAG, "Stopping background entropy collection...");
+    if(!app->state->is_running) {
+        LOG_D(TAG, "Entropy worker not running");
+        return;
+    }
+    
+    LOG_D(TAG, "Stopping background entropy collection (we started it)...");
     app->state->is_running = false;
     
     // Set LED back to red when stopping entropy collection
@@ -137,7 +178,7 @@ static void flipper_rng_passphrase_stop_entropy_worker(FlipperRngApp* app) {
     
     // Don't block GUI thread with join - let worker exit on its own
     // The worker will exit cleanly when is_running becomes false
-    FURI_LOG_D(TAG, "Background entropy worker stop requested");
+    LOG_D(TAG, "Background entropy worker stop requested");
 }
 
 // Draw callback for diceware view
@@ -182,9 +223,9 @@ void flipper_rng_passphrase_draw_callback(Canvas* canvas, void* context) {
         // Show error message if no wordlist
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str_aligned(canvas, 64, 20, AlignCenter, AlignTop, "No wordlist found!");
-        canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignTop, "Please place");
-        canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignTop, "eff_large_wordlist.txt");
-        canvas_draw_str_aligned(canvas, 64, 52, AlignCenter, AlignTop, "in /apps/Tools/FlipperRNG/");
+        canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignTop, "Wordlists should be");
+        canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignTop, "bundled with the app");
+        canvas_draw_str_aligned(canvas, 64, 52, AlignCenter, AlignTop, "in /apps_data/entropylab/");
         return;
     }
     
@@ -229,7 +270,7 @@ void flipper_rng_passphrase_draw_callback(Canvas* canvas, void* context) {
             max_lines = 6;
             line_height = 7;
             start_y = 24;
-            chars_per_line = 28;  // Fit more chars per line
+            chars_per_line = 28;
         }
         
         int y_pos = start_y;
@@ -263,6 +304,9 @@ void flipper_rng_passphrase_draw_callback(Canvas* canvas, void* context) {
                 
                 canvas_draw_str_aligned(canvas, 64, y_pos, AlignCenter, AlignTop, line);
                 y_pos += line_height;
+            } else {
+                // Safety: if no progress made, advance at least 1 char to prevent infinite loop
+                line_end = line_start + 1;
             }
             
             chars_processed = line_end;
@@ -286,7 +330,7 @@ bool flipper_rng_passphrase_input_callback(InputEvent* event, void* context) {
     FlipperRngApp* app = context;
     bool consumed = false;
     
-    if(event->type == InputTypePress || event->type == InputTypeRepeat) {
+    if(event->type == InputTypePress) {
         consumed = true;
         
         switch(event->key) {
@@ -296,12 +340,24 @@ bool flipper_rng_passphrase_input_callback(InputEvent* event, void* context) {
                     app->diceware_view,
                     FlipperRngPassphraseModel* model,
                     {
-                        // Only generate if wordlist is loaded and not currently loading/indexing
-                        if(model->sd_context && model->sd_context->is_loaded && !model->is_loading) {
+                        // Check if entropy is ready (minimum collection time elapsed)
+                        if(!app->state->entropy_ready) {
+                            // Show warning - not enough entropy collected yet
+                            LOG_W(TAG, "Entropy not ready yet, please wait for minimum collection time");
+                            snprintf(model->passphrase, sizeof(model->passphrase), 
+                                    "Please wait...\nCollecting entropy");
+                            break;
+                        }
+                        
+                        // Only generate if wordlist is loaded and not currently loading/indexing/generating
+                        if(model->sd_context && model->sd_context->is_loaded && !model->is_loading && !model->is_generating) {
                             model->is_generating = true;
                             
+                            // Securely wipe old passphrase before generating new one
+                            secure_wipe(model->passphrase, sizeof(model->passphrase));
+                            
                             // Entropy worker should already be running in background
-                            FURI_LOG_D(TAG, "Generating passphrase with continuously refreshed entropy pool");
+                            LOG_D(TAG, "Generating passphrase with continuously refreshed entropy pool");
                             
                             flipper_rng_passphrase_generate_sd(
                                 app->state,
@@ -377,40 +433,57 @@ void flipper_rng_passphrase_enter_callback(void* context) {
         app->diceware_view,
         FlipperRngPassphraseModel* model,
         {
-            // Try to load wordlist if not already loaded
-            if(model->sd_context && !model->sd_context->is_loaded) {
+            // Check if we need to load/index the wordlist
+            bool needs_loading = !model->sd_context->is_loaded;
+            bool needs_indexing = !flipper_rng_passphrase_sd_is_indexed(model->sd_context);
+            
+            if(model->sd_context && (needs_loading || needs_indexing)) {
                 // Check if wordlist exists
                 if(flipper_rng_passphrase_sd_exists(model->sd_context, PassphraseListEFFLong)) {
-                    // Load it (just opens the file)
-                    if(flipper_rng_passphrase_sd_load(model->sd_context, PassphraseListEFFLong)) {
+                    // Load/reload the file if needed
+                    if(needs_loading) {
+                        LOG_D(TAG, "Wordlist not loaded, attempting to load...");
+                        if(!flipper_rng_passphrase_sd_load(model->sd_context, PassphraseListEFFLong)) {
+                            LOG_E(TAG, "Failed to load wordlist file!");
+                            return;
+                        }
+                        LOG_D(TAG, "Wordlist file opened successfully");
                         model->sd_available = true;
                         model->list_type = PassphraseListEFFLong;
                         model->entropy_bits = flipper_rng_passphrase_sd_entropy_bits(model->list_type, model->num_words);
-                        
-                        // Start async index building if not already indexed
-                        if(!flipper_rng_passphrase_sd_is_indexed(model->sd_context)) {
-                            model->is_loading = true;
-                            model->load_progress = 0.0f;
-                            snprintf(model->load_status, sizeof(model->load_status), "Preparing wordlist...");
-                            
-                            // Create worker context
-                            IndexBuildWorkerContext* worker_ctx = malloc(sizeof(IndexBuildWorkerContext));
-                            worker_ctx->app = app;
-                            worker_ctx->sd_context = model->sd_context;
-                            
-                            // Start worker thread
-                            FuriThread* worker_thread = furi_thread_alloc_ex(
-                                "IndexBuilder",
-                                2048,  // Stack size
-                                index_build_worker,
-                                worker_ctx
-                            );
-                            furi_thread_start(worker_thread);
-                            
-                            FURI_LOG_I(TAG, "Started async index building thread");
-                        }
                     }
+                    
+                    // Build index if needed
+                    if(needs_indexing) {
+                        LOG_D(TAG, "Index not built, starting async build...");
+                        model->is_loading = true;
+                        model->load_progress = 0.0f;
+                        snprintf(model->load_status, sizeof(model->load_status), "Preparing wordlist...");
+                        
+                        // Create worker context
+                        IndexBuildWorkerContext* worker_ctx = malloc(sizeof(IndexBuildWorkerContext));
+                        worker_ctx->app = app;
+                        worker_ctx->sd_context = model->sd_context;
+                        
+                        // Start worker thread
+                        model->index_worker_thread = furi_thread_alloc_ex(
+                            "IndexBuilder",
+                            2048,  // Stack size
+                            index_build_worker,
+                            worker_ctx
+                        );
+                        
+                        furi_thread_start(model->index_worker_thread);
+                        
+                        LOG_D(TAG, "Started async index building thread");
+                    } else {
+                        LOG_D(TAG, "Index already built, ready to generate");
+                    }
+                } else {
+                    LOG_E(TAG, "Wordlist file does not exist!");
                 }
+            } else if(model->sd_context && model->sd_context->is_loaded && flipper_rng_passphrase_sd_is_indexed(model->sd_context)) {
+                LOG_D(TAG, "Wordlist already loaded and indexed");
             }
         },
         true
@@ -425,7 +498,7 @@ void flipper_rng_passphrase_enter_callback(void* context) {
             if(model->sd_context && model->sd_context->is_loaded && 
                flipper_rng_passphrase_sd_is_indexed(model->sd_context) && 
                !model->is_loading) {
-                FURI_LOG_I(TAG, "Wordlist already ready, starting background entropy collection...");
+                LOG_D(TAG, "Wordlist already ready, starting background entropy collection...");
                 flipper_rng_passphrase_start_entropy_worker(app);
             }
         },
@@ -437,7 +510,17 @@ void flipper_rng_passphrase_enter_callback(void* context) {
 void flipper_rng_passphrase_exit_callback(void* context) {
     FlipperRngApp* app = context;
     
-    FURI_LOG_I(TAG, "Exiting passphrase generator, stopping background entropy collection");
+    LOG_D(TAG, "Exiting passphrase generator, stopping background entropy collection");
+    
+    // Securely wipe passphrase from memory when leaving view
+    with_view_model(
+        app->diceware_view,
+        FlipperRngPassphraseModel* model,
+        {
+            secure_wipe(model->passphrase, sizeof(model->passphrase));
+        },
+        false
+    );
     
     // Stop background entropy collection when leaving passphrase generator
     flipper_rng_passphrase_stop_entropy_worker(app);
@@ -470,6 +553,7 @@ View* flipper_rng_passphrase_view_alloc(FlipperRngApp* app) {
             model->sd_context = flipper_rng_passphrase_sd_alloc();
             model->sd_available = false;
             model->is_loading = false;
+            model->index_worker_thread = NULL;
         },
         true
     );
@@ -479,12 +563,29 @@ View* flipper_rng_passphrase_view_alloc(FlipperRngApp* app) {
 
 // Free diceware view
 void flipper_rng_passphrase_view_free(View* view) {
-    // Free SD context
+    // Securely wipe and free SD context
     with_view_model(
         view,
         FlipperRngPassphraseModel* model,
         {
+            // Wait for index worker thread to finish if it's still running
+            if(model->index_worker_thread) {
+                FuriThreadState state = furi_thread_get_state(model->index_worker_thread);
+                if(state != FuriThreadStateStopped) {
+                    LOG_D(TAG, "Waiting for index worker thread to finish...");
+                    furi_thread_join(model->index_worker_thread);
+                }
+                furi_thread_free(model->index_worker_thread);
+                model->index_worker_thread = NULL;
+                LOG_D(TAG, "Index worker thread cleaned up");
+            }
+            
+            // Securely wipe passphrase before freeing
+            secure_wipe(model->passphrase, sizeof(model->passphrase));
+            
             if(model->sd_context) {
+                // Wipe current_word in SD context
+                secure_wipe(model->sd_context->current_word, sizeof(model->sd_context->current_word));
                 flipper_rng_passphrase_sd_free(model->sd_context);
                 model->sd_context = NULL;
             }

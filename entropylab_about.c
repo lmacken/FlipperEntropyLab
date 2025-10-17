@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 
 typedef struct {
     // Simplified - no QR code functionality
@@ -18,22 +18,24 @@ static void flipper_rng_about_draw_callback(Canvas* canvas, void* context) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
     
-    // Simple centered title for v1.0 release
+    // Title
     canvas_set_font(canvas, FontPrimary);
     char title[32];
     snprintf(title, sizeof(title), "Entropy Lab v%s", FLIPPER_RNG_VERSION);
-    canvas_draw_str_aligned(canvas, 64, 10, AlignCenter, AlignTop, title);
+    canvas_draw_str_aligned(canvas, 64, 4, AlignCenter, AlignTop, title);
     
-    // Draw bordered info section (moved down to align)
+    // Tagline
     canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignTop, "Chaos-powered randomness!");
+    canvas_draw_str_aligned(canvas, 64, 24, AlignCenter, AlignTop, "RF noise + IR + HW RNG");
     
-    // Draw border around info section
-    canvas_draw_frame(canvas, 2, 24, 124, 36);
+    // Warning box
+    canvas_draw_frame(canvas, 2, 34, 124, 18);
+    canvas_draw_str_aligned(canvas, 64, 37, AlignCenter, AlignTop, "EXPERIMENTAL SOFTWARE");
+    canvas_draw_str_aligned(canvas, 64, 45, AlignCenter, AlignTop, "Use at your own risk!");
     
-    // Centered text inside the bordered section (adjusted for new frame position)
-    canvas_draw_str_aligned(canvas, 64, 30, AlignCenter, AlignTop, "High-quality entropy");
-    canvas_draw_str_aligned(canvas, 64, 38, AlignCenter, AlignTop, "from HW RNG, RF & IR");
-    canvas_draw_str_aligned(canvas, 64, 50, AlignCenter, AlignTop, "Created by Luke Macken");
+    // Footer
+    canvas_draw_str_aligned(canvas, 64, 56, AlignCenter, AlignTop, "By Luke Macken");
 }
 
 static bool flipper_rng_about_input_callback(InputEvent* event, void* context) {

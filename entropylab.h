@@ -62,7 +62,12 @@ typedef struct {
     PassphraseListType wordlist_type;  // Selected wordlist for passphrase generation
     uint32_t poll_interval_ms;
     uint32_t visual_refresh_ms;  // Configurable visualization refresh rate
+    uint32_t mix_frequency;  // How often to mix entropy pool (iterations between mixes)
+    uint32_t mix_counter;  // Counter for rotating AES key derivation positions
     bool is_running;
+    bool entropy_ready;  // True when minimum entropy has been collected
+    uint32_t entropy_collection_start;  // Tick when entropy collection started
+    uint32_t last_passphrase_generation_time;  // Tick when last passphrase was generated
     uint8_t entropy_pool[RNG_POOL_SIZE];
     size_t entropy_pool_pos;
     uint32_t bytes_generated;

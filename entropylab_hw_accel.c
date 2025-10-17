@@ -12,7 +12,7 @@
 #include <stm32wbxx_ll_dma.h>
 #include <stm32wbxx_ll_usart.h>
 
-#define TAG "FlipperRNG_HW"
+#define TAG "EntropyLab_HW"
 #define CRYPTO_TIMEOUT_US 10000  // 10ms timeout for AES operations
 
 
@@ -218,33 +218,6 @@ void flipper_rng_hw_uart_tx_bulk(FuriHalSerialHandle* handle, const uint8_t* dat
         furi_hal_serial_tx(handle, data + offset, to_send);
         offset += to_send;
     }
-}
-
-// Fast CRC32 using lookup table (if hardware CRC not available)
-static const uint32_t crc32_table[256] = {
-    // CRC32 lookup table (truncated for brevity)
-    0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA,
-    // ... (full table would be here)
-};
-
-uint32_t flipper_rng_hw_crc32(const uint8_t* data, size_t size) {
-    uint32_t crc = 0xFFFFFFFF;
-    
-    // Process 4 bytes at a time when possible
-    size_t i;
-    for(i = 0; i + 3 < size; i += 4) {
-        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-        crc = crc32_table[(crc ^ data[i+1]) & 0xFF] ^ (crc >> 8);
-        crc = crc32_table[(crc ^ data[i+2]) & 0xFF] ^ (crc >> 8);
-        crc = crc32_table[(crc ^ data[i+3]) & 0xFF] ^ (crc >> 8);
-    }
-    
-    // Handle remaining bytes
-    for(; i < size; i++) {
-        crc = crc32_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    }
-    
-    return ~crc;
 }
 
 // High-resolution timing using DWT cycle counter

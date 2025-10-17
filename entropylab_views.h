@@ -59,6 +59,7 @@ void flipper_rng_byte_distribution_enter_callback(void* context);
 bool flipper_rng_byte_distribution_input_callback(InputEvent* event, void* context);
 
 // Source stats view callbacks
+void flipper_rng_source_stats_enter_callback(void* context);
 void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context);
 bool flipper_rng_source_stats_input_callback(InputEvent* event, void* context);
 

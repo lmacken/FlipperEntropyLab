@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 
 // Bitcoin donation address - Replace with your own!
 #define BTC_ADDRESS "bc1q4usujj2pujxhh23fgy0dfzrweh7k9zaqm2t0fq"

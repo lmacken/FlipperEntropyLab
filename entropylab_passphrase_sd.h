@@ -4,10 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PASSPHRASE_SD_PATH "/ext/apps/Tools/entropylab"
-#define PASSPHRASE_EFF_LONG_PATH "/ext/apps/Tools/entropylab/eff_large_wordlist.txt"
-#define PASSPHRASE_BIP39_PATH "/ext/apps/Tools/entropylab/bip39_english.txt"
-#define PASSPHRASE_SLIP39_PATH "/ext/apps/Tools/entropylab/slip39_english.txt"
+#define PASSPHRASE_SD_PATH "/ext/apps_data/entropylab"
+#define PASSPHRASE_EFF_LONG_PATH "/ext/apps_data/entropylab/eff_large_wordlist.txt"
+#define PASSPHRASE_BIP39_PATH "/ext/apps_data/entropylab/bip39_english.txt"
+#define PASSPHRASE_SLIP39_PATH "/ext/apps_data/entropylab/slip39_english.txt"
 
 // Wordlist sizes and entropy
 #define EFF_LONG_SIZE 7776    // 6^5 dice rolls, ~12.925 bits per word

@@ -2,31 +2,63 @@
 #include "entropylab_passphrase.h"
 #include "entropylab_passphrase_sd.h"
 #include "entropylab_entropy.h"
+#include "entropylab_secure.h"
+#include "entropylab_log.h"
 #include <furi.h>
 #include <string.h>
 #include <stdio.h>
 
-#define TAG "FlipperRNG-Passphrase"
+#define TAG "EntropyLab-Passphrase"
 
 // Generate a random index for the wordlist (0 to max_value-1)
+// Uses constant-time rejection sampling to prevent timing side-channel attacks
 uint16_t flipper_rng_passphrase_get_random_index(FlipperRngState* state, uint16_t max_value) {
-    // Get 2 bytes of entropy and modulo by max_value
-    uint8_t random_bytes[2];
-    flipper_rng_extract_random_bytes(state, random_bytes, 2);
-    
-    uint16_t random_value = (random_bytes[0] << 8) | random_bytes[1];
-    
     // To avoid modulo bias, we'll use rejection sampling
     // Max valid value is the largest multiple of max_value that fits in 16 bits
     uint16_t max_valid = (65535 / max_value) * max_value;
     
-    // If we got a value that's too large, get new random bytes
-    while(random_value >= max_valid) {
+    // Calculate rejection probability to determine max iterations needed
+    // Worst case: EFF wordlist (7776) has ~3.1% rejection rate
+    // 4 iterations gives us 99.99%+ success probability
+    const uint8_t MAX_ITERATIONS = 4;
+    
+    uint8_t random_bytes[2];
+    uint16_t random_value = 0;
+    bool found_valid = false;
+    
+    // CONSTANT-TIME: Always do exactly MAX_ITERATIONS, regardless of when we find valid value
+    // This prevents timing side-channel attacks that could leak information about rejected values
+    for(uint8_t iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+        // Get 2 bytes of entropy
         flipper_rng_extract_random_bytes(state, random_bytes, 2);
-        random_value = (random_bytes[0] << 8) | random_bytes[1];
+        uint16_t candidate = (random_bytes[0] << 8) | random_bytes[1];
+        
+        // Check if this value is valid (no modulo bias)
+        bool is_valid = (candidate < max_valid);
+        
+        // Use constant-time selection: update random_value only on first valid candidate
+        // This ensures we always do the same number of operations
+        if(is_valid && !found_valid) {
+            random_value = candidate;
+            found_valid = true;
+        }
+        
+        // Always wipe the random bytes, regardless of whether we used them
+        secure_wipe(random_bytes, sizeof(random_bytes));
     }
     
-    return random_value % max_value;
+    // Extremely unlikely (< 0.01% chance), but if we didn't find valid value after MAX_ITERATIONS,
+    // use the last candidate modulo max_value (introduces tiny bias but prevents infinite loop)
+    if(!found_valid) {
+        LOG_W(TAG, "Rejection sampling failed after %d iterations, using fallback", MAX_ITERATIONS);
+        flipper_rng_extract_random_bytes(state, random_bytes, 2);
+        random_value = (random_bytes[0] << 8) | random_bytes[1];
+        secure_wipe(random_bytes, sizeof(random_bytes));
+    }
+    
+    uint16_t result = random_value % max_value;
+    
+    return result;
 }
 
 // Generate a diceware passphrase - now uses only SD wordlists
@@ -39,9 +71,9 @@ void flipper_rng_passphrase_generate(
     UNUSED(state);
     UNUSED(num_words);
     
-    // This function is deprecated - use flipper_rng_passphrase_generate_sd instead
-    // All passphrases now use the shipped EFF wordlists
-    FURI_LOG_E(TAG, "Embedded wordlist removed - use SD wordlist generation");
+    // This function is no longer used - all passphrases use SD wordlists
+    // Use flipper_rng_passphrase_generate_sd() instead
+    LOG_E(TAG, "Embedded wordlist removed - use SD wordlist generation");
     
     if(passphrase && max_length > 0) {
         snprintf(passphrase, max_length, "Use SD wordlist mode");
@@ -59,7 +91,7 @@ void flipper_rng_passphrase_generate_sd(
     PassphraseSDContext* ctx = (PassphraseSDContext*)sd_context;
     
     if(!state || !ctx || !passphrase || max_length == 0) {
-        FURI_LOG_E(TAG, "Invalid parameters for SD diceware generation");
+        LOG_E(TAG, "Invalid parameters for SD diceware generation");
         return;
     }
     
@@ -90,7 +122,7 @@ void flipper_rng_passphrase_generate_sd(
         }
         
         if(!word) {
-            FURI_LOG_E(TAG, "Failed to get word at index %d", word_index);
+            LOG_E(TAG, "Failed to get word at index %d", word_index);
             break;
         }
         
@@ -99,7 +131,7 @@ void flipper_rng_passphrase_generate_sd(
         // Check if we have space for this word plus a space (or null terminator)
         size_t space_needed = word_len + ((i < num_words - 1) ? 1 : 0);
         if(current_pos + space_needed >= max_length) {
-            FURI_LOG_W(TAG, "Passphrase buffer too small, truncating at %d words", i);
+            LOG_W(TAG, "Passphrase buffer too small, truncating at %d words", i);
             break;
         }
         
@@ -117,7 +149,13 @@ void flipper_rng_passphrase_generate_sd(
     // Ensure null termination
     passphrase[current_pos] = '\0';
     
-    FURI_LOG_I(TAG, "Generated %d-word passphrase from SD wordlist", num_words);
+    LOG_D(TAG, "Generated %d-word passphrase from SD wordlist", num_words);
+    
+    // Note: Passphrase is NOT wiped here - it needs to be displayed to user
+    // Wipe will happen when:
+    // 1. User generates a new passphrase (cleared at start of this function)
+    // 2. User exits the passphrase view (exit callback)
+    // 3. App closes (view free)
 }
 
 // Calculate entropy bits for a given number of words

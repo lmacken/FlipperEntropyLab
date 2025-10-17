@@ -16,8 +16,10 @@
 #include <toolbox/stream/file_stream.h>
 #include <infrared.h>
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 
+// Forward declarations
+static void flipper_rng_stop_ir_worker(FlipperRngApp* app);
 
 // LED status control functions
 void flipper_rng_set_led_stopped(FlipperRngApp* app) {
@@ -42,8 +44,8 @@ void flipper_rng_set_led_off(FlipperRngApp* app) {
 // Start IR worker for entropy collection
 static void flipper_rng_start_ir_worker(FlipperRngApp* app) {
     if(app->ir_worker) {
-        FURI_LOG_W(TAG, "IR worker already running");
-        return;
+        FURI_LOG_W(TAG, "IR worker already running, stopping it first");
+        flipper_rng_stop_ir_worker(app);
     }
     
     // Check if IR entropy is enabled
@@ -74,20 +76,42 @@ static void flipper_rng_start_ir_worker(FlipperRngApp* app) {
 // Stop IR worker
 static void flipper_rng_stop_ir_worker(FlipperRngApp* app) {
     if(!app->ir_worker) {
+        FURI_LOG_D(TAG, "IR worker already stopped or not started");
         return;
     }
     
     FURI_LOG_I(TAG, "Stopping IR worker...");
+    
+    // Stop RX first - infrared_worker_rx_stop() is synchronous and waits for callbacks
     infrared_worker_rx_stop(app->ir_worker);
+    
+    // The stop function should ensure all callbacks are complete before returning
+    // If we see crashes here, we'll know the Flipper firmware's infrared_worker_rx_stop()
+    // isn't properly synchronous and we'll need to add back a small delay
     infrared_worker_free(app->ir_worker);
     app->ir_worker = NULL;
-    FURI_LOG_I(TAG, "IR worker stopped");
+    FURI_LOG_I(TAG, "IR worker stopped and freed");
 }
 
 // Persistent IR callback - runs continuously, accumulates entropy
 void flipper_rng_ir_callback(void* ctx, InfraredWorkerSignal* signal) {
     FlipperRngState* state = (FlipperRngState*)ctx;
-    if(!state) return;
+    
+    // Safety checks - prevent crashes from invalid callbacks
+    if(!state) {
+        FURI_LOG_E(TAG, "IR callback: NULL state");
+        return;
+    }
+    
+    if(!signal) {
+        FURI_LOG_E(TAG, "IR callback: NULL signal");
+        return;
+    }
+    
+    // Don't process if we're shutting down
+    if(!state->is_running) {
+        return;
+    }
     
     // Quick blue LED flash
     furi_hal_light_set(LightBlue, 100);
@@ -158,9 +182,17 @@ void flipper_rng_menu_callback(void* context, uint32_t index) {
     
     switch(index) {
     case FlipperRngMenuToggle:
-        if(!app->state->is_running) {
+        // Check actual thread state, not just the flag
+        FuriThreadState current_thread_state = furi_thread_get_state(app->worker_thread);
+        bool thread_actually_running = (current_thread_state == FuriThreadStateRunning);
+        
+        FURI_LOG_I(TAG, "Toggle clicked: is_running=%d, thread_state=%d", 
+                   app->state->is_running, current_thread_state);
+        
+        // Use thread state as source of truth
+        if(!thread_actually_running) {
             // Start the generator
-            FURI_LOG_I(TAG, "Start Generator selected, is_running=%d", app->state->is_running);
+            FURI_LOG_I(TAG, "Start Generator selected, thread not running");
             
             // ALWAYS stop and clean up first, regardless of is_running flag
             FURI_LOG_I(TAG, "Force stopping any existing worker thread...");
@@ -205,6 +237,10 @@ void flipper_rng_menu_callback(void* context, uint32_t index) {
         // Start the worker thread
             app->state->is_running = true;
             furi_thread_start(app->worker_thread);
+            
+            // Give worker thread a moment to start
+            furi_delay_ms(10);
+            
             flipper_rng_set_led_generating(app);  // Set LED to green
             
             // Start IR worker if IR entropy is enabled
@@ -213,10 +249,21 @@ void flipper_rng_menu_callback(void* context, uint32_t index) {
             // Update menu text to "Stop Generator"
             submenu_change_item_label(app->submenu, FlipperRngMenuToggle, "Stop Generator");
             
+            // Update all view models to reflect started state
+            FURI_LOG_I(TAG, "Updating view models with is_running=%d", app->state->is_running);
+            flipper_rng_visualization_update(app, NULL, 0);
+            FURI_LOG_I(TAG, "View models updated with started state");
+            
             FURI_LOG_I(TAG, "Worker thread started from menu, is_running=%d", app->state->is_running);
         } else {
             // Stop the generator
             FURI_LOG_I(TAG, "Stopping worker thread...");
+            
+            // Check if worker is actually running
+            FuriThreadState thread_state = furi_thread_get_state(app->worker_thread);
+            FURI_LOG_I(TAG, "Worker thread state: %d (0=Stopped, 1=Starting, 2=Running)", thread_state);
+            
+            // Set flag to stop worker
             app->state->is_running = false;
             
             // Stop IR worker
@@ -235,7 +282,13 @@ void flipper_rng_menu_callback(void* context, uint32_t index) {
             // Update menu text back to "Start Generator"
             submenu_change_item_label(app->submenu, FlipperRngMenuToggle, "Start Generator");
             
-            // Don't block GUI thread with join - let worker exit on its own
+            // Update all view models to reflect stopped state immediately
+            // Don't wait - just update the views now
+            FURI_LOG_I(TAG, "Updating view models with is_running=%d", app->state->is_running);
+            flipper_rng_visualization_update(app, NULL, 0);
+            FURI_LOG_I(TAG, "View models updated with stopped state");
+            
+            // Worker thread will exit on its own when it checks is_running flag
         }
         break;
         
@@ -327,7 +380,7 @@ static uint32_t flipper_rng_back_callback(void* context) {
 }
 
 FlipperRngApp* flipper_rng_app_alloc(void) {
-    FURI_LOG_I(TAG, "Allocating FlipperRNG app...");
+    FURI_LOG_I(TAG, "Allocating Entropy Lab app...");
     FlipperRngApp* app = malloc(sizeof(FlipperRngApp));
     if(!app) {
         FURI_LOG_E(TAG, "Failed to malloc app");
@@ -343,13 +396,24 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
         return NULL;
     }
     app->state->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    if(!app->state->mutex) {
+        FURI_LOG_E(TAG, "Failed to allocate mutex");
+        free(app->state);
+        free(app);
+        return NULL;
+    }
     app->state->entropy_sources = EntropySourceAll;
     app->state->output_mode = OutputModeNone;  // Default to None (visualization only)
     app->state->mixing_mode = MixingModeHardware;  // Default to HW AES
     app->state->wordlist_type = PassphraseListEFFLong;  // Default to EFF wordlist
     app->state->poll_interval_ms = 1;  // Maximum performance - 1ms polling
     app->state->visual_refresh_ms = 500;  // Smooth, easy-to-watch visualization
+    app->state->mix_frequency = 32;  // Mix pool every 32 iterations (balanced default)
+    app->state->mix_counter = 0;  // Initialize mix counter for rotating key positions
     app->state->is_running = false;
+    app->state->entropy_ready = false;  // Not ready until minimum collection time
+    app->state->entropy_collection_start = 0;  // Will be set when worker starts
+    app->state->last_passphrase_generation_time = 0;  // No passphrase generated yet
     app->state->entropy_pool_pos = 0;
     app->state->bytes_generated = 0;
     
@@ -391,7 +455,6 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
         free(app);
         return NULL;
     }
-    // view_dispatcher_enable_queue is deprecated, not needed for newer SDK
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
     
@@ -453,8 +516,19 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     view_allocate_model(app->source_stats_view, ViewModelTypeLocking, sizeof(FlipperRngVisualizationModel));
     view_set_draw_callback(app->source_stats_view, flipper_rng_source_stats_draw_callback);
     view_set_input_callback(app->source_stats_view, flipper_rng_source_stats_input_callback);
+    view_set_enter_callback(app->source_stats_view, flipper_rng_source_stats_enter_callback);
     view_set_previous_callback(app->source_stats_view, flipper_rng_back_callback);
     view_dispatcher_add_view(app->view_dispatcher, FlipperRngViewSourceStats, app->source_stats_view);
+    
+    // Initialize source stats view to show bits/sec by default (more useful than cumulative)
+    with_view_model(
+        app->source_stats_view,
+        FlipperRngVisualizationModel* model,
+        {
+            model->show_bits_per_sec = true;  // Default to rate display
+        },
+        false
+    );
     
     
     // Passphrase generator view
@@ -487,7 +561,7 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
     // Initialize IR worker (but don't start it yet)
     app->ir_worker = NULL;  // Will be allocated when generation starts
     
-    // Start with main menu (splash screen temporarily disabled)
+    // Start with main menu
     FURI_LOG_I(TAG, "Starting at main menu...");
     view_dispatcher_switch_to_view(app->view_dispatcher, FlipperRngViewMenu);
     
@@ -503,17 +577,38 @@ FlipperRngApp* flipper_rng_app_alloc(void) {
 void flipper_rng_app_free(FlipperRngApp* app) {
     furi_assert(app);
     
+    FURI_LOG_I(TAG, "Starting app cleanup...");
+    
     // Stop worker if running
     if(app->state->is_running) {
+        FURI_LOG_I(TAG, "Stopping worker thread...");
         app->state->is_running = false;
-        furi_thread_join(app->worker_thread);
+        
+        // Wait for worker to actually stop (with timeout)
+        uint32_t wait_start = furi_get_tick();
+        while(furi_thread_get_state(app->worker_thread) != FuriThreadStateStopped) {
+            if(furi_get_tick() - wait_start > 2000) {  // 2 second timeout
+                FURI_LOG_W(TAG, "Worker thread didn't stop cleanly, forcing");
+                break;
+            }
+            furi_delay_ms(10);
+        }
+        
+        // Now join if it's stopped
+        if(furi_thread_get_state(app->worker_thread) == FuriThreadStateStopped) {
+            furi_thread_join(app->worker_thread);
+            FURI_LOG_I(TAG, "Worker thread stopped cleanly");
+        }
     }
     
     // Stop and free IR worker if it exists
     flipper_rng_stop_ir_worker(app);
     
-    // Deinitialize hardware acceleration
+    // Deinitialize hardware acceleration (this also cleans up SubGHz)
     flipper_rng_hw_accel_deinit();
+    
+    // Clean up entropy sources (including SubGHz reset and mutex cleanup)
+    flipper_rng_deinit_entropy_sources(app->state);
     
     // Turn off all LEDs before exiting
     flipper_rng_set_led_off(app);
@@ -562,9 +657,6 @@ void flipper_rng_app_free(FlipperRngApp* app) {
         furi_hal_serial_control_release(app->state->serial_handle);
     }
     
-    
-    // Free test buffer if allocated
-    
     // Free state
     furi_mutex_free(app->state->mutex);
     free(app->state);
@@ -588,7 +680,7 @@ static void flipper_rng_splash_check_timer(void* context) {
 int32_t entropylab_app(void* p) {
     UNUSED(p);
     
-    FURI_LOG_I(TAG, "FlipperRNG starting...");
+    FURI_LOG_I(TAG, "Entropy Lab starting...");
     
     FlipperRngApp* app = flipper_rng_app_alloc();
     if(!app) {
@@ -616,6 +708,6 @@ int32_t entropylab_app(void* p) {
     FURI_LOG_I(TAG, "View dispatcher exited, cleaning up");
     flipper_rng_app_free(app);
     
-    FURI_LOG_I(TAG, "FlipperRNG exited cleanly");
+    FURI_LOG_I(TAG, "Entropy Lab exited cleanly");
     return 0;
 }

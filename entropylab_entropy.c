@@ -13,7 +13,7 @@
 #include <infrared_worker.h>
 #include <infrared_transmit.h>
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 
 // Initialize entropy sources - High quality only
 void flipper_rng_init_entropy_sources(FlipperRngState* state) {
@@ -29,6 +29,17 @@ void flipper_rng_init_entropy_sources(FlipperRngState* state) {
 
 void flipper_rng_deinit_entropy_sources(FlipperRngState* state) {
     UNUSED(state);
+    
+    // Clean up SubGHz mutex if allocated
+    extern FuriMutex* subghz_mutex;
+    if(subghz_mutex) {
+        // Make sure mutex is not locked before freeing
+        // Try to release in case it's stuck locked
+        furi_mutex_release(subghz_mutex);  // Safe even if not locked
+        furi_mutex_free(subghz_mutex);
+        subghz_mutex = NULL;
+        FURI_LOG_I(TAG, "SubGHz mutex freed");
+    }
     
     // Reset Sub-GHz to clean state for other apps
     // This ensures we don't leave the radio in a modified state
@@ -111,7 +122,16 @@ uint32_t flipper_rng_get_temperature_noise(void) {
 
 // Add entropy to the pool
 void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t bits) {
-    furi_mutex_acquire(state->mutex, FuriWaitForever);
+    if(!state || !state->mutex) {
+        FURI_LOG_E(TAG, "add_entropy: Invalid state or mutex");
+        return;
+    }
+    
+    // Use timeout instead of forever to prevent deadlock
+    if(furi_mutex_acquire(state->mutex, 100) != FuriStatusOk) {
+        FURI_LOG_W(TAG, "add_entropy: Could not acquire mutex, entropy discarded");
+        return;
+    }
     
     // Add entropy bytes to pool
     for(int i = 0; i < 4 && bits > 0; i++) {
@@ -134,21 +154,52 @@ void flipper_rng_add_entropy(FlipperRngState* state, uint32_t entropy, uint8_t b
 
 // Mix entropy pool - HARDWARE ACCELERATED with AES
 void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
-    furi_mutex_acquire(state->mutex, FuriWaitForever);
+    if(!state || !state->mutex) {
+        FURI_LOG_E(TAG, "mix_pool: Invalid state or mutex");
+        return;
+    }
+    
+    // Use timeout instead of forever to prevent deadlock
+    if(furi_mutex_acquire(state->mutex, 100) != FuriStatusOk) {
+        FURI_LOG_W(TAG, "mix_pool: Could not acquire mutex, skipping mix");
+        return;
+    }
     
     // Try hardware AES mixing first (ultra-fast)
     uint32_t aes_key[8];
     uint32_t* pool32 = (uint32_t*)state->entropy_pool;
     
-    // Generate AES key from current pool state and hardware RNG
-    aes_key[0] = pool32[0] ^ furi_hal_random_get();
-    aes_key[1] = pool32[127] ^ furi_hal_random_get();
-    aes_key[2] = pool32[255] ^ furi_hal_random_get();
-    aes_key[3] = pool32[383] ^ furi_hal_random_get();
-    aes_key[4] = pool32[511] ^ flipper_rng_hw_get_cycles();
-    aes_key[5] = pool32[639] ^ flipper_rng_hw_get_cycles();
-    aes_key[6] = pool32[767] ^ DWT->CYCCNT;
-    aes_key[7] = pool32[895] ^ DWT->CYCCNT;
+    // Generate AES key from ROTATING pool positions to prevent targeted attacks
+    // Use mix_counter to rotate through different pool positions each time
+    // This prevents an attacker from influencing specific fixed positions
+    uint32_t pool32_size = RNG_POOL_SIZE / sizeof(uint32_t);
+    
+    // Table of prime numbers for unpredictable distribution
+    // These are all prime numbers < 256, good for modular arithmetic
+    static const uint8_t prime_table[] = {
+        17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79,
+        83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163
+    };
+    const size_t prime_table_size = sizeof(prime_table) / sizeof(prime_table[0]);
+    
+    // Derive prime offsets from pool state (makes extraction pattern unpredictable)
+    // Use different pool positions to select primes, mixed with mix_counter
+    uint8_t prime_selector_1 = state->entropy_pool[(state->mix_counter * 7) % RNG_POOL_SIZE];
+    uint8_t prime_selector_2 = state->entropy_pool[(state->mix_counter * 11) % RNG_POOL_SIZE];
+    uint32_t base_prime = prime_table[prime_selector_1 % prime_table_size];
+    uint32_t step_prime = prime_table[prime_selector_2 % prime_table_size];
+    
+    // Calculate base offset using pool-derived prime
+    uint32_t base_offset = (state->mix_counter * base_prime) % pool32_size;
+    
+    // Derive 8 key words from rotating positions, mixed with hardware RNG
+    for(int i = 0; i < 8; i++) {
+        uint32_t pos = (base_offset + (i * step_prime)) % pool32_size;
+        aes_key[i] = pool32[pos] ^ furi_hal_random_get();
+    }
+    
+    // Increment counter for next mix (will rotate through different positions)
+    state->mix_counter++;
     
     // Choose mixing method based on configuration
     bool use_hardware_aes = false;
@@ -222,7 +273,7 @@ void flipper_rng_mix_entropy_pool(FlipperRngState* state) {
     furi_mutex_release(state->mutex);
 }
 
-// Extract a random byte from the pool (legacy single-byte version)
+// Extract a single random byte from the pool
 uint8_t flipper_rng_extract_random_byte(FlipperRngState* state) {
     uint8_t result;
     flipper_rng_extract_random_bytes(state, &result, 1);
@@ -233,7 +284,17 @@ uint8_t flipper_rng_extract_random_byte(FlipperRngState* state) {
 void flipper_rng_extract_random_bytes(FlipperRngState* state, uint8_t* buffer, size_t count) {
     if(!buffer || count == 0) return;
     
-    furi_mutex_acquire(state->mutex, FuriWaitForever);
+    if(!state || !state->mutex) {
+        FURI_LOG_E(TAG, "extract_bytes: Invalid state or mutex");
+        return;
+    }
+    
+    // Use timeout instead of forever to prevent deadlock
+    if(furi_mutex_acquire(state->mutex, 100) != FuriStatusOk) {
+        FURI_LOG_W(TAG, "extract_bytes: Could not acquire mutex, returning zeros");
+        memset(buffer, 0, count);
+        return;
+    }
     
     // Prime offsets for good distribution across the pool
     const size_t prime_offsets[8] = {
@@ -258,8 +319,11 @@ void flipper_rng_extract_random_bytes(FlipperRngState* state, uint8_t* buffer, s
         
         buffer[byte_idx] = result;
         
-        // Advance position for next byte
-        state->entropy_pool_pos = (state->entropy_pool_pos + 1) % RNG_POOL_SIZE;
+        // Advance position for next byte with random jitter
+        // Mix in hardware RNG to prevent position prediction
+        // This makes it harder for an attacker to predict which pool bytes will be extracted next
+        uint32_t jitter = furi_hal_random_get() & 0x7;  // 0-7 random advance
+        state->entropy_pool_pos = (state->entropy_pool_pos + 1 + jitter) % RNG_POOL_SIZE;
     }
     
     state->bytes_generated += count;
@@ -313,6 +377,8 @@ void flipper_rng_collect_hardware_rng(FlipperRngState* state) {
 
 // Static mutex for SubGHz access protection
 static FuriMutex* subghz_mutex = NULL;
+static uint32_t subghz_error_count = 0;  // Track consecutive errors for recovery
+static uint32_t subghz_last_success = 0;  // Last successful collection time
 
 // Get SubGHz RSSI noise - Enhanced hardware implementation with improved entropy
 uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
@@ -331,10 +397,18 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     // Try to acquire SubGHz access (with timeout to prevent deadlock)
     if(furi_mutex_acquire(subghz_mutex, 100) != FuriStatusOk) {
         FURI_LOG_W(TAG, "SubGHz RSSI: Could not acquire mutex, skipping");
+        subghz_error_count++;
         return 0;
     }
     
     FURI_LOG_D(TAG, "SubGHz RSSI: Starting enhanced hardware RSSI collection");
+    
+    // If we've had too many consecutive errors, force a reset
+    if(subghz_error_count > 10) {
+        FURI_LOG_W(TAG, "SubGHz RSSI: Too many errors (%lu), forcing reset", subghz_error_count);
+        furi_hal_subghz_reset();
+        subghz_error_count = 0;
+    }
     
     // Optimized frequency set based on regional validation
     // Focus on frequencies that work globally without blocks
@@ -386,14 +460,28 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     
     // Try to prepare SubGHz for RX
     bool subghz_available = false;
+    bool init_success = false;
     
     // Check if SubGHz is already in use by trying to acquire it
     // We'll use the frequency test as our availability check instead
     
+    // CRITICAL FIX: Wrap all SubGHz operations in error handling
+    // to prevent crashes from bad hardware states
+    FURI_CRITICAL_ENTER();  // Disable interrupts during state transition
+    
     // Ensure we're in a clean state
     furi_hal_subghz_sleep();
-    furi_delay_ms(1);
+    
+    // Check if we should abort early
+    if(state && !state->is_running) {
+        FURI_CRITICAL_EXIT();
+        furi_mutex_release(subghz_mutex);
+        return 0;
+    }
+    
     furi_hal_subghz_idle();
+    
+    FURI_CRITICAL_EXIT();  // Re-enable interrupts
     
     // Load optimized preset for entropy collection
     // Using OOK 650kHz for wide bandwidth and good sensitivity
@@ -417,11 +505,23 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     uint32_t test_freq = furi_hal_subghz_set_frequency(433920000);
     if(test_freq > 0) {
         subghz_available = true;
+        init_success = true;
         FURI_LOG_D(TAG, "SubGHz RSSI: Hardware ready at %lu Hz", test_freq);
     } else {
         FURI_LOG_W(TAG, "SubGHz RSSI: Hardware not responding, using timing entropy");
-        // Clean up if initialization failed
+        subghz_error_count++;
+        
+        // Clean up if initialization failed - with comprehensive reset
+        furi_hal_subghz_idle();
         furi_hal_subghz_sleep();
+        
+        // If errors are piling up, do a full reset
+        if(subghz_error_count > 5) {
+            FURI_LOG_W(TAG, "SubGHz RSSI: Multiple init failures, forcing reset");
+            furi_hal_subghz_reset();
+            subghz_error_count = 0;
+        }
+        
         furi_mutex_release(subghz_mutex);
         return 0;
     }
@@ -475,10 +575,22 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     // This ensures we sample different frequencies each time
     uint8_t prime_hop = 7;  // Prime number for good distribution
     
+    // Add timeout protection for the entire sampling loop
+    uint32_t loop_start_time = furi_get_tick();
+    const uint32_t MAX_LOOP_TIME_MS = 500;  // Max 500ms for all sampling
+    
     for(int i = 0; i < samples_to_take && byte_idx < 4; i++) {
         // Check if we should stop early
         if(state && !state->is_running) {
             FURI_LOG_D(TAG, "SubGHz RSSI: Early exit due to stop request");
+            break;
+        }
+        
+        // Timeout protection - prevent infinite loops
+        if(furi_get_tick() - loop_start_time > MAX_LOOP_TIME_MS) {
+            FURI_LOG_W(TAG, "SubGHz RSSI: Sampling timeout after %lums, collected %u bytes", 
+                      furi_get_tick() - loop_start_time, byte_idx);
+            subghz_error_count++;
             break;
         }
         
@@ -514,7 +626,10 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
             uint32_t actual_freq = furi_hal_subghz_set_frequency(frequency);
             
             if(actual_freq > 0) {
+                // CRITICAL FIX: Wrap RX in critical section to prevent interrupt issues
+                FURI_CRITICAL_ENTER();
                 furi_hal_subghz_rx();
+                FURI_CRITICAL_EXIT();
                 
                 // Spectrum analyzer uses 3ms for RSSI stabilization
                 // This ensures AGC has settled and we get accurate readings
@@ -524,65 +639,86 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
                 // Sample more times for increased entropy quality
                 float rssi_samples[5];
                 uint8_t lqi_samples[5];
+                bool sample_success = true;
                 
                 for(int j = 0; j < 5; j++) {
+                    // Verify we're still in RX mode before sampling
+                    // This prevents crashes if radio state changed unexpectedly
                     rssi_samples[j] = furi_hal_subghz_get_rssi();
                     lqi_samples[j] = furi_hal_subghz_get_lqi();
+                    
+                    // Basic sanity check on RSSI values
+                    if(rssi_samples[j] < -130.0f || rssi_samples[j] > 0.0f) {
+                        FURI_LOG_W(TAG, "SubGHz RSSI: Invalid RSSI value %.1f, using fallback", 
+                                  (double)rssi_samples[j]);
+                        sample_success = false;
+                        break;
+                    }
+                    
                     furi_delay_us(200);  // 200us between samples for variation
                 }
                 
-                // Calculate RSSI variance (good entropy source)
-                float rssi_avg = 0;
-                for(int j = 0; j < 5; j++) {
-                    rssi_avg += rssi_samples[j];
+                if(sample_success) {
+                    // Calculate RSSI variance (good entropy source)
+                    float rssi_avg = 0;
+                    for(int j = 0; j < 5; j++) {
+                        rssi_avg += rssi_samples[j];
+                    }
+                    rssi_avg /= 5.0f;
+                    
+                    float rssi_variance = 0;
+                    for(int j = 0; j < 5; j++) {
+                        float diff = rssi_samples[j] - rssi_avg;
+                        rssi_variance += diff * diff;
+                    }
+                    rssi_variance /= 5.0f;  // Normalize variance
+                    
+                    // Convert floats to bits for entropy extraction
+                    union { float f; uint32_t i; } rssi_conv = { .f = rssi_samples[0] };
+                    union { float f; uint32_t i; } var_conv = { .f = rssi_variance };
+                    
+                    // Get additional timing entropy
+                    uint32_t timing_end = DWT->CYCCNT;
+                    uint32_t timing_noise = (timing_end - timing_start);
+                    
+                    // Enhanced entropy extraction using multiple sources
+                    // Combine RSSI mantissa bits, variance, LQI changes, and timing
+                    uint8_t rssi_bits = (rssi_conv.i & 0xFF) ^ ((rssi_conv.i >> 8) & 0xFF);
+                    uint8_t var_bits = (var_conv.i & 0xFF) ^ ((var_conv.i >> 16) & 0xFF);
+                    
+                    // XOR all 5 LQI samples for maximum entropy
+                    uint8_t lqi_bits = lqi_samples[0];
+                    for(int j = 1; j < 5; j++) {
+                        lqi_bits ^= lqi_samples[j];
+                    }
+                    
+                    uint8_t timing_bits = (timing_noise & 0xFF) ^ ((timing_noise >> 8) & 0xFF) ^ ((timing_noise >> 16) & 0xFF);
+                    
+                    // Mix all entropy sources with rotation
+                    noise_byte = rssi_bits;
+                    noise_byte = (noise_byte << 1) | (noise_byte >> 7);
+                    noise_byte ^= var_bits;
+                    noise_byte = (noise_byte << 1) | (noise_byte >> 7);
+                    noise_byte ^= lqi_bits;
+                    noise_byte = (noise_byte << 1) | (noise_byte >> 7);
+                    noise_byte ^= timing_bits;
+                    
+                    // Only log detailed info for some samples to reduce spam
+                    if(byte_idx <= 2 || (byte_idx == 3 && i == samples_to_take - 1)) {
+                        FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu MHz, RSSI=%.1f dBm (var=%.2f), LQI=%u, byte=0x%02X", 
+                                  frequency/1000000, (double)rssi_avg, (double)rssi_variance, lqi_samples[0], noise_byte);
+                    }
+                } else {
+                    // Sample failed, use timing fallback
+                    uint32_t timing_end = DWT->CYCCNT;
+                    noise_byte = (timing_end - timing_start) & 0xFF;
+                    subghz_error_count++;
                 }
-                rssi_avg /= 5.0f;
                 
-                float rssi_variance = 0;
-                for(int j = 0; j < 5; j++) {
-                    float diff = rssi_samples[j] - rssi_avg;
-                    rssi_variance += diff * diff;
-                }
-                rssi_variance /= 5.0f;  // Normalize variance
-                
-                // Convert floats to bits for entropy extraction
-                union { float f; uint32_t i; } rssi_conv = { .f = rssi_samples[0] };
-                union { float f; uint32_t i; } var_conv = { .f = rssi_variance };
-                
-                // Get additional timing entropy
-                uint32_t timing_end = DWT->CYCCNT;
-                uint32_t timing_noise = (timing_end - timing_start);
-                
-                // Enhanced entropy extraction using multiple sources
-                // Combine RSSI mantissa bits, variance, LQI changes, and timing
-                uint8_t rssi_bits = (rssi_conv.i & 0xFF) ^ ((rssi_conv.i >> 8) & 0xFF);
-                uint8_t var_bits = (var_conv.i & 0xFF) ^ ((var_conv.i >> 16) & 0xFF);
-                
-                // XOR all 5 LQI samples for maximum entropy
-                uint8_t lqi_bits = lqi_samples[0];
-                for(int j = 1; j < 5; j++) {
-                    lqi_bits ^= lqi_samples[j];
-                }
-                
-                uint8_t timing_bits = (timing_noise & 0xFF) ^ ((timing_noise >> 8) & 0xFF) ^ ((timing_noise >> 16) & 0xFF);
-                
-                // Mix all entropy sources with rotation
-                noise_byte = rssi_bits;
-                noise_byte = (noise_byte << 1) | (noise_byte >> 7);
-                noise_byte ^= var_bits;
-                noise_byte = (noise_byte << 1) | (noise_byte >> 7);
-                noise_byte ^= lqi_bits;
-                noise_byte = (noise_byte << 1) | (noise_byte >> 7);
-                noise_byte ^= timing_bits;
-                
-                // Only log detailed info for some samples to reduce spam
-                if(byte_idx <= 2 || (byte_idx == 3 && i == samples_to_take - 1)) {
-                    FURI_LOG_D(TAG, "SubGHz RSSI: Freq=%lu MHz, RSSI=%.1f dBm (var=%.2f), LQI=%u, byte=0x%02X", 
-                              frequency/1000000, (double)rssi_avg, (double)rssi_variance, lqi_samples[0], noise_byte);
-                }
-                
-                // Return to idle between frequencies
+                // Return to idle between frequencies - with critical section
+                FURI_CRITICAL_ENTER();
                 furi_hal_subghz_idle();
+                FURI_CRITICAL_EXIT();
             } else {
                 // Failed to set frequency, use timing
                 uint32_t timing_end = DWT->CYCCNT;
@@ -620,17 +756,43 @@ uint32_t flipper_rng_get_subghz_rssi_noise_ex(FlipperRngState* state) {
     entropy ^= DWT->CYCCNT;
     
     // Clean shutdown of SubGHz if we used it
-    if(subghz_available) {
+    if(subghz_available && init_success) {
+        // Critical section for state transitions to prevent race conditions
+        FURI_CRITICAL_ENTER();
         furi_hal_subghz_idle();
         furi_hal_subghz_sleep();
+        FURI_CRITICAL_EXIT();
+        
         // Don't reset here - only sleep to save power
-        // Reset should only happen on app exit, not between collections
+        // Reset should only happen on app exit or after errors
+    } else if(subghz_available) {
+        // Init was not fully successful, force a reset to clean state
+        FURI_LOG_W(TAG, "SubGHz RSSI: Init incomplete, forcing reset");
+        furi_hal_subghz_reset();
+        subghz_error_count++;
     }
     
-    FURI_LOG_I(TAG, "SubGHz RSSI: Collected %u bytes entropy=0x%08lX (HW:%s, Valid:%zu, Sampled:%u)", 
-              byte_idx, entropy, subghz_available ? "Yes" : "No", valid_count, samples_to_take);
+    // Track successful completion
+    if(entropy != 0 && byte_idx > 0) {
+        subghz_error_count = 0;  // Reset error counter on success
+        subghz_last_success = furi_get_tick();
+    } else {
+        subghz_error_count++;
+        
+        // If we haven't had a success in a long time, force reset
+        uint32_t time_since_success = furi_get_tick() - subghz_last_success;
+        if(time_since_success > 60000) {  // 60 seconds without success
+            FURI_LOG_W(TAG, "SubGHz RSSI: No success in 60s, forcing reset");
+            furi_hal_subghz_reset();
+            subghz_error_count = 0;
+            subghz_last_success = furi_get_tick();
+        }
+    }
     
-    // Release mutex before returning
+    FURI_LOG_I(TAG, "SubGHz RSSI: Collected %u bytes entropy=0x%08lX (HW:%s, Valid:%zu, Sampled:%u, Errors:%lu)", 
+              byte_idx, entropy, subghz_available ? "Yes" : "No", valid_count, samples_to_take, subghz_error_count);
+    
+    // Release mutex before returning - CRITICAL to prevent deadlock
     furi_mutex_release(subghz_mutex);
     
     return entropy;

@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define TAG "FlipperRNG-DicewareSD"
+#define TAG "EntropyLab-PassphraseSD"
 
 // Helper function to read a line from file
 static bool storage_file_read_line_helper(File* file, char* buffer, size_t buffer_size) {
@@ -148,7 +148,7 @@ static uint16_t flipper_rng_passphrase_sd_get_expected_count(PassphraseListType 
 }
 
 bool flipper_rng_passphrase_sd_exists(PassphraseSDContext* ctx, PassphraseListType type) {
-    if(!ctx || type == PassphraseListEFFLong) return false;
+    if(!ctx) return false;
     
     const char* path = flipper_rng_passphrase_sd_get_path(type);
     if(!path) return false;
@@ -159,16 +159,18 @@ bool flipper_rng_passphrase_sd_exists(PassphraseSDContext* ctx, PassphraseListTy
 bool flipper_rng_passphrase_sd_load(PassphraseSDContext* ctx, PassphraseListType type) {
     if(!ctx) return false;
     
+    // If already loaded with the same type and indexed, don't reload
+    if(ctx->is_loaded && ctx->type == type && ctx->is_indexed) {
+        FURI_LOG_D(TAG, "Wordlist already loaded and indexed, skipping reload");
+        return true;
+    }
+    
     // Close any previously opened file
     if(ctx->is_loaded) {
         storage_file_close(ctx->file);
         ctx->is_loaded = false;
-    }
-    
-    if(type == PassphraseListEFFLong) {
-        ctx->type = PassphraseListEFFLong;
-        ctx->is_loaded = true;
-        return true;
+        // Note: We intentionally preserve is_indexed and line_offsets
+        // They remain valid as long as the file content hasn't changed
     }
     
     const char* path = flipper_rng_passphrase_sd_get_path(type);
@@ -223,11 +225,11 @@ bool flipper_rng_passphrase_sd_create_defaults(Storage* storage) {
     
     // Create a README file explaining how to add wordlists
     File* file = storage_file_alloc(storage);
-    const char* readme_path = "/ext/apps/Tools/FlipperRNG/README_WORDLISTS.txt";
+    const char* readme_path = "/ext/apps_data/entropylab/README_WORDLISTS.txt";
     
     if(storage_file_open(file, readme_path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        const char* readme_content = 
-            "FlipperRNG Diceware Wordlists\n"
+        const char* readme_content =
+            "Entropy Lab Diceware Wordlists\n"
             "==============================\n\n"
             "Place wordlist files here:\n"
             "- eff_large_wordlist.txt: EFF Long wordlist (7776 words)\n"
@@ -274,7 +276,7 @@ float flipper_rng_passphrase_sd_entropy_bits(PassphraseListType type, uint8_t nu
 
 // Build index for fast word access
 bool flipper_rng_passphrase_sd_build_index(PassphraseSDContext* ctx, void (*progress_callback)(float progress, void* context), void* callback_context) {
-    if(!ctx || !ctx->is_loaded || ctx->type == PassphraseListEFFLong) {
+    if(!ctx || !ctx->is_loaded) {
         return false;
     }
     

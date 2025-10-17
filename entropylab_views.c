@@ -4,7 +4,7 @@
 #include <math.h>
 
 
-#define TAG "FlipperRNG"
+#define TAG "EntropyLab"
 
 // Helper function to format byte counts in human-readable format
 static void format_bytes(char* buffer, size_t buffer_size, uint32_t bytes) {
@@ -57,6 +57,13 @@ static const char* visual_refresh_names[] = {
     "1s",
 };
 
+static const char* mix_frequency_names[] = {
+    "16 (Aggressive)",
+    "32 (Balanced)",
+    "48 (Moderate)",
+    "64 (Conservative)",
+};
+
 static const char* mixing_mode_names[] = {
     "HW AES",
     "SW XOR",
@@ -74,6 +81,10 @@ static const uint32_t visual_refresh_values[] = {
 
 static const uint32_t poll_interval_values[] = {
     1, 5, 10, 50, 100, 500,
+};
+
+static const uint32_t mix_frequency_values[] = {
+    16, 32, 48, 64,
 };
 
 static const uint32_t entropy_source_values[] = {
@@ -137,6 +148,13 @@ void flipper_rng_visual_refresh_changed(VariableItem* item) {
     
     app->state->visual_refresh_ms = visual_refresh_values[index];
     variable_item_set_current_value_text(item, visual_refresh_names[index]);
+}
+
+void flipper_rng_mix_frequency_changed(VariableItem* item) {
+    FlipperRngApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    app->state->mix_frequency = mix_frequency_values[index];
+    variable_item_set_current_value_text(item, mix_frequency_names[index]);
 }
 
 void flipper_rng_mixing_mode_changed(VariableItem* item) {
@@ -260,6 +278,25 @@ void flipper_rng_setup_config_view(FlipperRngApp* app) {
     }
     variable_item_set_current_value_index(item, visual_index);
     variable_item_set_current_value_text(item, visual_refresh_names[visual_index]);
+    
+    // Mix frequency
+    item = variable_item_list_add(
+        app->variable_item_list,
+        "Mix Frequency",
+        COUNT_OF(mix_frequency_names),
+        flipper_rng_mix_frequency_changed,
+        app
+    );
+    // Find the index for the current mix frequency
+    uint32_t mix_index = 1;  // Default to 32 (Balanced)
+    for(uint32_t i = 0; i < COUNT_OF(mix_frequency_values); i++) {
+        if(mix_frequency_values[i] == app->state->mix_frequency) {
+            mix_index = i;
+            break;
+        }
+    }
+    variable_item_set_current_value_index(item, mix_index);
+    variable_item_set_current_value_text(item, mix_frequency_names[mix_index]);
 }
 
 // Visualization drawing
@@ -774,13 +811,15 @@ void flipper_rng_byte_distribution_draw_callback(Canvas* canvas, void* context) 
 
 void flipper_rng_byte_distribution_enter_callback(void* context) {
     FlipperRngApp* app = context;
-    FURI_LOG_I(TAG, "Entering byte distribution view");
+    FURI_LOG_I(TAG, "Entering byte distribution view, app->state->is_running=%d", app->state->is_running);
     
     // Sync state from app when entering the view
+    // ALWAYS read from app->state to ensure we have the latest state
     with_view_model(
         app->byte_distribution_view,
         FlipperRngVisualizationModel* model,
         {
+            // Force sync from app state - this is the source of truth
             model->is_running = app->state->is_running;
             model->bytes_generated = app->state->bytes_generated;
             // Copy histogram data
@@ -813,12 +852,62 @@ bool flipper_rng_byte_distribution_input_callback(InputEvent* event, void* conte
 }
 
 // Source Stats View - Shows real-time entropy contribution from each source
+void flipper_rng_source_stats_enter_callback(void* context) {
+    FlipperRngApp* app = context;
+    FURI_LOG_I(TAG, "Entering source stats view, app->state->is_running=%d", app->state->is_running);
+    
+    // Sync state from app when entering the view
+    // ALWAYS read from app->state to ensure we have the latest state
+    with_view_model(
+        app->source_stats_view,
+        FlipperRngVisualizationModel* model,
+        {
+            // Force sync from app state - this is the source of truth
+            model->is_running = app->state->is_running;
+            model->bytes_generated = app->state->bytes_generated;
+            model->bits_from_hw_rng = app->state->bits_from_hw_rng;
+            model->bits_from_subghz_rssi = app->state->bits_from_subghz_rssi;
+            model->bits_from_infrared = app->state->bits_from_infrared;
+            
+            // Set start time when generation starts
+            if(model->is_running && model->start_time_ms == 0) {
+                model->start_time_ms = furi_get_tick();
+            } else if(!model->is_running) {
+                model->start_time_ms = 0;  // Reset when stopped
+            }
+            
+            // Calculate display values based on current mode
+            if(model->show_bits_per_sec && model->is_running) {
+                uint32_t elapsed_ms = furi_get_tick() - model->start_time_ms;
+                float elapsed_sec = elapsed_ms / 1000.0f;
+                if(elapsed_sec < 0.1f) elapsed_sec = 0.1f;
+                
+                model->hw_display_value = (uint32_t)(model->bits_from_hw_rng / elapsed_sec);
+                model->rf_display_value = (uint32_t)(model->bits_from_subghz_rssi / elapsed_sec);
+                model->ir_display_value = (uint32_t)(model->bits_from_infrared / elapsed_sec);
+            } else {
+                model->hw_display_value = model->bits_from_hw_rng;
+                model->rf_display_value = model->bits_from_subghz_rssi;
+                model->ir_display_value = model->bits_from_infrared;
+            }
+            
+            FURI_LOG_I(TAG, "Source stats state synced: running=%d, bytes=%lu, hw=%lu, rf=%lu, ir=%lu", 
+                      model->is_running, model->bytes_generated,
+                      model->bits_from_hw_rng, model->bits_from_subghz_rssi, model->bits_from_infrared);
+        },
+        true
+    );
+}
+
 void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
     FlipperRngVisualizationModel* model = context;
     
     canvas_clear(canvas);
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 10, "Entropy Sources");
+    
+    // Show mode in title
+    const char* title = model->show_bits_per_sec ? "Entropy Rate" : "Entropy Total";
+    canvas_draw_str(canvas, 2, 10, title);
     
     if(!model->is_running) {
         canvas_set_font(canvas, FontSecondary);
@@ -829,9 +918,12 @@ void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
     
     canvas_set_font(canvas, FontSecondary);
     
+    // Show toggle hint at bottom
+    canvas_draw_str_aligned(canvas, 64, 63, AlignCenter, AlignBottom, "[OK] Toggle Mode");
+    
     // Use cached display values from the model
     // These are only updated when the model itself updates
-    const char* unit = model->show_bits_per_sec ? "bits/s" : "bits";
+    const char* unit = model->show_bits_per_sec ? "b/s" : "bits";
     
     // Calculate total for percentage calculation
     uint32_t total_bits = model->bits_from_hw_rng + 
@@ -850,7 +942,8 @@ void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
     // Hardware RNG
     uint32_t hw_percent = (model->bits_from_hw_rng * 100) / total_bits;
     char buffer[48];
-    snprintf(buffer, sizeof(buffer), "HW RNG: %lu %s", model->hw_display_value, unit);
+    snprintf(buffer, sizeof(buffer), "HW: %lu %s (%lu%%)", 
+             model->hw_display_value, unit, hw_percent);
     canvas_draw_str(canvas, 2, y, buffer);
     
     // Draw progress bar below text
@@ -865,7 +958,8 @@ void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
     
     // SubGHz RSSI
     uint32_t rf_percent = (model->bits_from_subghz_rssi * 100) / total_bits;
-    snprintf(buffer, sizeof(buffer), "SubGHz: %lu %s", model->rf_display_value, unit);
+    snprintf(buffer, sizeof(buffer), "RF: %lu %s (%lu%%)", 
+             model->rf_display_value, unit, rf_percent);
     canvas_draw_str(canvas, 2, y, buffer);
     
     bar_y = y + 1;
@@ -879,7 +973,8 @@ void flipper_rng_source_stats_draw_callback(Canvas* canvas, void* context) {
     
     // Infrared
     uint32_t ir_percent = (model->bits_from_infrared * 100) / total_bits;
-    snprintf(buffer, sizeof(buffer), "Infrared: %lu %s", model->ir_display_value, unit);
+    snprintf(buffer, sizeof(buffer), "IR: %lu %s (%lu%%)", 
+             model->ir_display_value, unit, ir_percent);
     canvas_draw_str(canvas, 2, y, buffer);
     
     bar_y = y + 1;

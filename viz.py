@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Smooth Emoji Art - No flickering, clean updates
+Entropy Lab Visualizer - Smooth, flickering-free visualization of random data streams
 """
 
 import serial
@@ -11,6 +11,7 @@ import select
 import termios
 import tty
 import threading
+import unicodedata
 
 def get_terminal_size():
     """Get terminal dimensions"""
@@ -28,39 +29,91 @@ def move_cursor(row, col):
     """Move cursor to specific position"""
     print(f'\033[{row};{col}H', end='', flush=True)
 
+def get_display_width(text):
+    """Get the actual display width of text (handling emojis and ANSI codes properly)"""
+    import re
+    # Remove ANSI escape codes before measuring
+    ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
+    clean_text = ansi_escape.sub('', text)
+    
+    width = 0
+    for char in clean_text:
+        # Most emojis are 2 columns, ASCII is 1
+        if ord(char) > 0x1F000:  # Emoji range
+            width += 2
+        elif unicodedata.east_asian_width(char) in ('F', 'W'):
+            width += 2
+        else:
+            width += 1
+    return width
+
+def pad_to_width(text, target_width):
+    """Pad text to exact display width, accounting for emoji widths"""
+    current_width = get_display_width(text)
+    if current_width < target_width:
+        return text + ' ' * (target_width - current_width)
+    elif current_width > target_width:
+        # Truncate to fit (remove characters from the end)
+        while get_display_width(text) > target_width and len(text) > 0:
+            text = text[:-1]
+        # Pad if we removed too much
+        return pad_to_width(text, target_width)
+    return text
+
 def smooth_emoji_art(port="/dev/ttyUSB0", baudrate=115200):
     """Smooth emoji art with no flickering"""
     
     # Get terminal size
     term_rows, term_cols = get_terminal_size()
     
+    # ANSI color codes for vibrant blocks
+    RESET = '\033[0m'
+    colors = [
+        '\033[48;5;196m',  # Bright Red
+        '\033[48;5;208m',  # Orange
+        '\033[48;5;226m',  # Yellow
+        '\033[48;5;46m',   # Bright Green
+        '\033[48;5;51m',   # Cyan
+        '\033[48;5;21m',   # Blue
+        '\033[48;5;201m',  # Magenta
+        '\033[48;5;213m',  # Pink
+        '\033[48;5;165m',  # Purple
+        '\033[48;5;93m',   # Dark Purple
+        '\033[48;5;33m',   # Deep Blue
+        '\033[48;5;39m',   # Sky Blue
+        '\033[48;5;48m',   # Turquoise
+        '\033[48;5;118m',  # Lime
+        '\033[48;5;184m',  # Gold
+        '\033[48;5;202m',  # Dark Orange
+    ]
+    
+    # Create colorful blocks (each block is 2 chars wide to match emoji width)
+    colorful_blocks = [f'{color}  {RESET}' for color in colors]
+    
+    # Grayscale gradient blocks (doubled for emoji width)
+    grayscale = ['██', '▓▓', '▒▒', '░░', '  ']
+    
     # Emoji collections
     emoji_sets = {
-        'blocks': ['█', '▉', '▊', '▋', '▌', '▍', '▎', '▏', ' '],
+        'blocks': colorful_blocks,
+        'gray': grayscale,
         'faces': ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩'],
         'animals': ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔'],
         'nature': ['🌸', '🌺', '🌻', '🌷', '🌹', '🌿', '🍀', '🌱', '🌲', '🌳', '🌴', '🌵', '🍄', '🦋', '🐝', '🐞'],
-        'space': ['🚀', '🛸', '⭐', '🌟', '💫', '✨', '🌠', '☄️', '🪐', '🌌', '🌙', '☀️', '🌞', '🌍', '🌎', '🌏'],
+        'space': ['🚀', '🛸', '⭐', '🌟', '💫', '✨', '🌠', '☄', '🪐', '🌌', '🌙', '☀', '🌞', '🌍', '🌎', '🌏'],
         'food': ['🍎', '🍏', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒', '🥭', '🍍', '🥥', '🍅', '🥑', '🥦'],
-        'mega': [
-            '🎲', '🎯', '🎮', '🎪', '🎭', '🎨', '🎬', '🎤', '🎧', '🎸', '🥁', '🎺', '🎷', '🎻',
-            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰',
-            '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸',
-            '🍎', '🍏', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🍈', '🍒', '🥭', '🍍', '🥥', '🍅',
-            '🚀', '🛸', '⭐', '🌟', '💫', '✨', '🌠', '☄️', '🪐', '🌌', '🌙', '☀️', '🌞', '🌍',
-            '🌸', '🌺', '🌻', '🌷', '🌹', '🌿', '🍀', '🌱', '🌲', '🌳', '🌴', '🌵', '🍄', '🦋'
-        ]
     }
     
-    current_set = 'mega'
+    current_set = 'blocks'
     frame_count = 0
     paused = False
     
     # Calculate display dimensions
-    canvas_width = min(35, (term_cols - 20) // 2)  # Account for emoji double-width
+    # Most emojis are 2-chars wide, so divide by 2
+    canvas_width = min(35, (term_cols - 10) // 2)  # Account for emoji double-width
     canvas_height = min(15, term_rows - 8)  # Leave space for UI
     
-    print(f"🎨 Smooth FlipperRNG Emoji Art")
+    print(f"🎨 Entropy Lab Visualizer")
     print(f"📡 Connecting to {port} at {baudrate} baud...")
     print(f"🖼️  Canvas: {canvas_width}x{canvas_height} (Terminal: {term_cols}x{term_rows})")
     
@@ -93,7 +146,7 @@ def smooth_emoji_art(port="/dev/ttyUSB0", baudrate=115200):
                         else:
                             print("▶️  RESUMED" + " " * 30, flush=True)
                         time.sleep(0.5)
-                    elif key in '1234567':
+                    elif key in '123456789':
                         # Change theme
                         theme_keys = list(emoji_sets.keys())
                         theme_index = int(key) - 1
@@ -122,30 +175,36 @@ def smooth_emoji_art(port="/dev/ttyUSB0", baudrate=115200):
                 
                 # Calculate centering
                 start_row = (term_rows - canvas_height - 4) // 2
-                start_col = (term_cols - canvas_width * 2) // 2  # *2 for emoji width
+                # Emoji display width: each emoji is 2 terminal columns
+                emoji_display_width = canvas_width * 2
+                start_col = max(1, (term_cols - emoji_display_width - 2) // 2)
                 
-                # Draw top border (fixed width calculation)
-                move_cursor(start_row, start_col - 1)
-                border_width = canvas_width * 2 + 2  # Exact width for emoji content + padding
-                print("╔" + "═" * border_width + "╗", flush=True)
+                # Draw top border with exact width
+                move_cursor(start_row, start_col)
+                # Border width = 1 (left) + emoji_display_width + 1 (right)
+                border_content_width = emoji_display_width
+                print("╔" + "═" * border_content_width + "╗", flush=True)
                 
                 # Draw title (proper centering)
-                move_cursor(start_row + 1, start_col - 1)
-                title = f"🎲 FlipperRNG Emoji Art - {current_set.upper()} - Frame {frame_count}"
-                # Truncate title if too long
-                if len(title) > border_width:
-                    title = title[:border_width-3] + "..."
-                padding_left = (border_width - len(title)) // 2
-                padding_right = border_width - len(title) - padding_left
-                print(f"║{' ' * padding_left}{title}{' ' * padding_right}║", flush=True)
+                move_cursor(start_row + 1, start_col)
+                title_text = f"Entropy Lab - {current_set.upper()} - Frame {frame_count}"
+                # Truncate if too long (leave room for borders)
+                max_title_width = border_content_width - 2  # Account for border chars
+                if len(title_text) > max_title_width:
+                    title_text = title_text[:max_title_width-3] + "..."
+                
+                # Center the text within the border
+                padding_left = (border_content_width - len(title_text)) // 2
+                padding_right = border_content_width - len(title_text) - padding_left
+                print(f"║{' ' * padding_left}{title_text}{' ' * padding_right}║", flush=True)
                 
                 # Draw separator
-                move_cursor(start_row + 2, start_col - 1)
-                print("╠" + "═" * border_width + "╣", flush=True)
+                move_cursor(start_row + 2, start_col)
+                print("╠" + "═" * border_content_width + "╣", flush=True)
                 
                 # Draw emoji canvas (perfect border alignment)
                 for y in range(canvas_height):
-                    move_cursor(start_row + 3 + y, start_col - 1)
+                    move_cursor(start_row + 3 + y, start_col)
                     print("║", end='', flush=True)
                     
                     line = ""
@@ -155,12 +214,13 @@ def smooth_emoji_art(port="/dev/ttyUSB0", baudrate=115200):
                         emoji = emojis[byte_val % len(emojis)]
                         line += emoji
                     
-                    # Ensure proper right border alignment
+                    # Ensure line is exactly the right width before adding border
+                    line = pad_to_width(line, emoji_display_width)
                     print(line + "║", flush=True)
                 
                 # Draw bottom border (perfectly aligned)
-                move_cursor(start_row + 3 + canvas_height, start_col - 1)
-                print("╚" + "═" * border_width + "╝", flush=True)
+                move_cursor(start_row + 3 + canvas_height, start_col)
+                print("╚" + "═" * border_content_width + "╝", flush=True)
                 
                 # Draw stats below (no flickering)
                 stats_row = start_row + 5 + canvas_height
@@ -204,20 +264,20 @@ def smooth_emoji_art(port="/dev/ttyUSB0", baudrate=115200):
         
         # Clean exit
         clear_screen()
-        print(f"🎨 Smooth emoji art ended after {frame_count} frames!")
-        print("✨ Thanks for the beautiful emoji chaos!")
+        print(f"🎨 Entropy Lab visualization ended after {frame_count} frames!")
+        print("✨ Thanks for exploring the entropy!")
         return 0
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Smooth Emoji Art - No flickering")
+    parser = argparse.ArgumentParser(description="Entropy Lab - Visualize random data streams")
     parser.add_argument("--port", default="/dev/ttyUSB0", help="UART port")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate")
     
     args = parser.parse_args()
     
-    print("🎨 FlipperRNG Smooth Emoji Art")
+    print("🎨 Entropy Lab Visualizer")
     print("=" * 40)
     print("✨ Beautiful borders and centering")
     print("🚫 No flickering or overlap issues")
