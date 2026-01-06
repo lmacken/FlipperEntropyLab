@@ -10,13 +10,10 @@ Transform your Flipper Zero into a professional-grade entropy generation and ana
 
 
 ![FlipperEntropyLab over UART](img/entropylab1.jpg)
+
 ![Flipper Screenshot](img/entropylab5.png)
+
 ![Flipper Screenshot](img/entropylab6.png)
-![Flipper Screenshot](img/entropylab4.png)
-![Flipper Screenshot](img/entropylab10.png)
-![Flipper Screenshot](img/entropylab3.png)
-![Flipper Screenshot](img/entropylab2.png)
-![Flipper Screenshot](img/entropylab7.png)
 
 
 ---
@@ -104,6 +101,8 @@ Entropy Lab leverages multiple independent hardware sources to generate high-qua
 
 ### 🗝️ Cryptographic Passphrase Generator
 
+![Passphrase Generator](img/entropylab10.png)
+
 Generate cryptographically secure passphrases using industry-standard wordlists:
 
 | Wordlist | Words | Bits/Word | Standard |
@@ -130,6 +129,12 @@ Generate cryptographically secure passphrases using industry-standard wordlists:
 
 #### 🎨 Real-Time Visualization
 
+![Visualization](img/entropylab3.png)
+
+![Visualization](img/entropylab7.png)
+
+![Visualization](img/entropylab2.png)
+
 Entropy Lab features an awesome visualization system that lets you see randomness in action:
 
 - **Random Walk** - Watch entropy evolve as a 2D random walk across the screen
@@ -139,12 +144,18 @@ Entropy Lab features an awesome visualization system that lets you see randomnes
 - **Statistics Overlay** - View generation rates and byte counts in real-time
 
 #### 📈 Byte Distribution Analysis
+
+![Byte Distribution](img/entropylab11.png)
+
 - Real-time histogram (16 bins)
 - Statistical distribution verification
 - Quality assessment indicators
 - Uniform distribution monitoring
 
 #### 📡 Entropy Source Statistics
+
+![Source Distribution](img/entropylab4.png)
+
 - Per-source contribution tracking
 - Bits/second rates for each source
 - Source comparison and analysis
