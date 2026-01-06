@@ -10,13 +10,13 @@ Transform your Flipper Zero into a professional-grade entropy generation and ana
 
 
 ![FlipperEntropyLab over UART](img/entropylab1.jpg)
-![Flipper Screenshot](img/entropylab5.jpg)
-![Flipper Screenshot](img/entropylab6.jpg)
-![Flipper Screenshot](img/entropylab4.jpg)
-![Flipper Screenshot](img/entropylab10.jpg)
-![Flipper Screenshot](img/entropylab3.jpg)
-![Flipper Screenshot](img/entropylab2.jpg)
-![Flipper Screenshot](img/entropylab7.jpg)
+![Flipper Screenshot](img/entropylab5.png)
+![Flipper Screenshot](img/entropylab6.png)
+![Flipper Screenshot](img/entropylab4.png)
+![Flipper Screenshot](img/entropylab10.png)
+![Flipper Screenshot](img/entropylab3.png)
+![Flipper Screenshot](img/entropylab2.png)
+![Flipper Screenshot](img/entropylab7.png)
 
 
 ---
