@@ -9,7 +9,14 @@
 Transform your Flipper Zero into a professional-grade entropy generation and analysis laboratory. Entropy Lab combines multiple independent hardware sources, advanced cryptographic mixing, and comprehensive statistical analysis to produce high-quality random data suitable for security applications, research, and cryptographic use cases.
 
 
-![FlipperEntropyLab over UART](entropylab1.jpg)
+![FlipperEntropyLab over UART](img/entropylab1.jpg)
+![Flipper Screenshot](img/entropylab5.jpg)
+![Flipper Screenshot](img/entropylab6.jpg)
+![Flipper Screenshot](img/entropylab4.jpg)
+![Flipper Screenshot](img/entropylab10.jpg)
+![Flipper Screenshot](img/entropylab3.jpg)
+![Flipper Screenshot](img/entropylab2.jpg)
+![Flipper Screenshot](img/entropylab7.jpg)
 
 
 ---
