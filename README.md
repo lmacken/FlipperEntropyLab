@@ -135,6 +135,8 @@ Generate cryptographically secure passphrases using industry-standard wordlists:
 
 ![Visualization](img/entropylab2.png)
 
+![Flipper Screenshot](img/demo2.gif)
+
 Entropy Lab features an awesome visualization system that lets you see randomness in action:
 
 - **Random Walk** - Watch entropy evolve as a 2D random walk across the screen
